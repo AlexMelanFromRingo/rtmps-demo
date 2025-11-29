@@ -3,143 +3,201 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RTMP Streaming Server - Dashboard</title>
+    <title>StreamHub Pro - Professional Streaming Dashboard</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>📡 RTMP Streaming Server</h1>
-            <p class="subtitle">Ваш личный стриминговый сервис</p>
+            <h1>🚀 StreamHub Pro</h1>
+            <p class="subtitle">Профессиональная стриминговая платформа с поддержкой AV1</p>
         </header>
 
+        <!-- Stream Key Generation Card -->
         <div class="card">
-            <h2>🔑 Генерация ключа трансляции</h2>
+            <h2>🔑 Создать ключ трансляции</h2>
             <div class="form-group">
                 <input type="text" id="streamName" placeholder="Название трансляции (опционально)">
-                <button onclick="generateKey()" class="btn btn-primary">Создать ключ трансляции</button>
+                <button onclick="generateKey()" class="btn btn-primary">
+                    Создать ключ
+                </button>
             </div>
 
             <div id="keyResult" class="key-result" style="display: none;">
                 <h3>✅ Ключ трансляции создан!</h3>
 
                 <div class="protocol-tabs">
-                    <button class="protocol-tab active" onclick="switchProtocol('srt')">🎯 SRT (Рекомендуется - ANY кодек!)</button>
-                    <button class="protocol-tab" onclick="switchProtocol('rtmp')">📡 RTMP (H.264 only)</button>
+                    <button class="protocol-tab active" onclick="switchProtocol('srt')">
+                        🎯 SRT (Рекомендуется)
+                    </button>
+                    <button class="protocol-tab" onclick="switchProtocol('rtmp')">
+                        📡 RTMP (Совместимость)
+                    </button>
                 </div>
 
+                <!-- SRT Protocol Section -->
                 <div id="srtProtocol" class="protocol-section">
                     <div class="protocol-badge srt-badge">
-                        ⭐ РЕКОМЕНДУЕТСЯ: Поддерживает AV1, HEVC, H.264, VP9
+                        ⭐ MODERN: Поддержка AV1, HEVC, H.264, VP9 | Adaptive Bitrate
                     </div>
 
                     <div class="info-block">
-                        <label>🎯 SRT URL для OBS:</label>
+                        <label>🎯 SRT URL для OBS</label>
                         <div class="copy-group">
                             <input type="text" id="srtUrl" readonly>
-                            <button onclick="copyToClipboard('srtUrl')" class="btn-copy">📋</button>
+                            <button onclick="copyToClipboard('srtUrl')" class="btn-copy">
+                                📋 Копировать
+                            </button>
                         </div>
-                        <small class="hint">Используйте AV1 кодек на вашей RTX 4080 для лучшего качества!</small>
+                        <small class="hint">Используйте с AV1/HEVC кодеком на вашей RTX 4080 Super!</small>
                     </div>
 
                     <div class="obs-instructions">
-                        <h4>📝 Инструкция для SRT в OBS:</h4>
+                        <h4>📝 Настройка OBS для SRT:</h4>
                         <ol>
-                            <li>Откройте <strong>OBS Studio</strong></li>
-                            <li>Перейдите в <strong>Настройки → Трансляция</strong></li>
-                            <li>Выберите <strong>Пользовательский...</strong></li>
+                            <li><strong>Настройки → Трансляция</strong> → Сервис: <strong>Пользовательский...</strong></li>
                             <li>Вставьте SRT URL в поле <strong>"Сервер"</strong></li>
                             <li><strong>Настройки → Вывод:</strong></li>
-                            <li style="margin-left: 20px">• Кодировщик: <strong>AV1 NVENC</strong> или <strong>HEVC NVENC</strong> ✨</li>
-                            <li style="margin-left: 20px">• Битрейт: 6000-10000 Kbps</li>
-                            <li>Нажмите <strong>OK</strong> и <strong>Начать трансляцию</strong></li>
+                            <li style="margin-left: 20px">• Кодировщик: <strong>AV1 NVENC</strong> (RTX 40 series) ⚡</li>
+                            <li style="margin-left: 20px">• Или: <strong>HEVC NVENC</strong> (альтернатива)</li>
+                            <li style="margin-left: 20px">• Битрейт: 6000-10000 Kbps (для 1440p ultrawide)</li>
+                            <li><strong>Начать трансляцию</strong> 🚀</li>
                         </ol>
                     </div>
                 </div>
 
+                <!-- RTMP Protocol Section -->
                 <div id="rtmpProtocol" class="protocol-section" style="display: none;">
                     <div class="protocol-badge rtmp-badge">
-                        ⚠️ Совместимость: Только H.264 кодек
+                        ⚠️ CLASSIC: Только H.264 | Стандартная совместимость
                     </div>
 
                     <div class="info-block">
-                        <label>📡 RTMP URL для OBS:</label>
+                        <label>📡 RTMP URL</label>
                         <div class="copy-group">
                             <input type="text" id="rtmpUrl" readonly>
-                            <button onclick="copyToClipboard('rtmpUrl')" class="btn-copy">📋</button>
+                            <button onclick="copyToClipboard('rtmpUrl')" class="btn-copy">
+                                📋 Копировать
+                            </button>
                         </div>
                     </div>
 
                     <div class="info-block">
-                        <label>🔐 Ключ потока (Stream Key):</label>
+                        <label>🔐 Ключ потока (Stream Key)</label>
                         <div class="copy-group">
                             <input type="text" id="rtmpStreamKey" readonly>
-                            <button onclick="copyToClipboard('rtmpStreamKey')" class="btn-copy">📋</button>
+                            <button onclick="copyToClipboard('rtmpStreamKey')" class="btn-copy">
+                                📋 Копировать
+                            </button>
                         </div>
                     </div>
 
                     <div class="obs-instructions">
-                        <h4>📝 Инструкция для RTMP в OBS:</h4>
+                        <h4>📝 Настройка OBS для RTMP:</h4>
                         <ol>
-                            <li>Откройте <strong>OBS Studio</strong></li>
-                            <li>Перейдите в <strong>Настройки → Трансляция</strong></li>
-                            <li>Выберите <strong>Пользовательский...</strong></li>
-                            <li>Вставьте <strong>RTMP URL</strong> в поле "Сервер"</li>
-                            <li>Вставьте <strong>Ключ потока</strong> в поле "Ключ потока"</li>
+                            <li><strong>Настройки → Трансляция</strong> → Сервис: <strong>Пользовательский...</strong></li>
+                            <li>Вставьте RTMP URL в поле <strong>"Сервер"</strong></li>
+                            <li>Вставьте Stream Key в поле <strong>"Ключ потока"</strong></li>
                             <li><strong>Настройки → Вывод:</strong></li>
                             <li style="margin-left: 20px">• Кодировщик: <strong>NVIDIA NVENC H.264</strong> (обязательно!)</li>
-                            <li>Нажмите <strong>OK</strong> и <strong>Начать трансляцию</strong></li>
+                            <li style="margin-left: 20px">• НЕ используйте AV1 или HEVC с RTMP!</li>
+                            <li><strong>Начать трансляцию</strong></li>
                         </ol>
                     </div>
                 </div>
 
-                <div class="info-block" style="margin-top: 20px;">
-                    <label>📺 Ссылка для просмотра:</label>
+                <!-- Watch URL (Common) -->
+                <div class="info-block" style="margin-top: 24px;">
+                    <label>📺 Ссылка для просмотра</label>
                     <div class="copy-group">
                         <input type="text" id="watchUrl" readonly>
-                        <button onclick="openWatch()" class="btn-open">🚀 Открыть</button>
+                        <button onclick="openWatch()" class="btn-open">
+                            🚀 Открыть плеер
+                        </button>
                     </div>
                 </div>
             </div>
-
-            <script>
-            function switchProtocol(protocol) {
-                // Переключаем табы
-                document.querySelectorAll('.protocol-tab').forEach(tab => {
-                    tab.classList.remove('active');
-                });
-                event.target.classList.add('active');
-
-                // Показываем нужную секцию
-                if (protocol === 'srt') {
-                    document.getElementById('srtProtocol').style.display = 'block';
-                    document.getElementById('rtmpProtocol').style.display = 'none';
-                } else {
-                    document.getElementById('srtProtocol').style.display = 'none';
-                    document.getElementById('rtmpProtocol').style.display = 'block';
-                }
-            }
-            </script>
         </div>
 
+        <!-- Stream Keys List Card -->
         <div class="card">
-            <h2>📋 Список ключей трансляции</h2>
-            <button onclick="loadKeys()" class="btn btn-secondary">🔄 Обновить список</button>
+            <h2>📋 Активные ключи трансляции</h2>
+            <button onclick="loadKeys()" class="btn btn-secondary">
+                🔄 Обновить список
+            </button>
             <div id="keysList" class="keys-list">
                 <p class="placeholder">Нажмите "Обновить список" для загрузки ключей</p>
             </div>
         </div>
 
+        <!-- Server Info Card -->
         <div class="card info-card">
             <h2>ℹ️ Информация о сервере</h2>
             <ul>
-                <li><strong>RTMP порт:</strong> 1935 (H.264 only)</li>
-                <li><strong>SRT порты:</strong> Динамические 9000+ (ANY codec) ⭐</li>
-                <li><strong>Web порт:</strong> 3000</li>
-                <li><strong>Media порт:</strong> 8000</li>
-                <li><strong>Протоколы:</strong> RTMP → HLS, SRT → HLS</li>
-                <li><strong>Поддерживаемые кодеки (SRT):</strong> AV1, HEVC, H.264, VP9, VP8</li>
+                <li>
+                    <strong>RTMP Server:</strong>
+                    <code>rtmp://localhost:1935/live</code>
+                </li>
+                <li>
+                    <strong>SRT Server:</strong>
+                    <span>Динамические порты 9000+</span>
+                </li>
+                <li>
+                    <strong>Поддерживаемые кодеки (SRT):</strong>
+                    <span class="text-success">AV1, HEVC, H.264, VP9, VP8</span>
+                </li>
+                <li>
+                    <strong>Поддерживаемые кодеки (RTMP):</strong>
+                    <span>H.264 only</span>
+                </li>
+                <li>
+                    <strong>Adaptive Bitrate:</strong>
+                    <span class="text-success">480p, 720p, 1080p</span>
+                </li>
+                <li>
+                    <strong>Hardware Acceleration:</strong>
+                    <span class="text-success">NVENC (RTX 4080 Super)</span>
+                </li>
+                <li>
+                    <strong>База данных:</strong>
+                    <span class="text-success">SQLite (persistent)</span>
+                </li>
+                <li>
+                    <strong>Real-time метрики:</strong>
+                    <span class="text-success">WebSocket enabled</span>
+                </li>
             </ul>
+        </div>
+
+        <!-- Features Card -->
+        <div class="card">
+            <h2>✨ Возможности</h2>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-value">🎯</div>
+                    <div class="metric-label">SRT Protocol</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">📊</div>
+                    <div class="metric-label">ABR Streaming</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">⚡</div>
+                    <div class="metric-label">NVENC H.264</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">💾</div>
+                    <div class="metric-label">Persistent Keys</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">🔌</div>
+                    <div class="metric-label">Live Metrics</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">🎬</div>
+                    <div class="metric-label">HLS Playback</div>
+                </div>
+            </div>
         </div>
     </div>
 

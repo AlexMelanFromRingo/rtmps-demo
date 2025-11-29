@@ -1,4 +1,9 @@
-// Генерация нового ключа трансляции
+// ═══════════════════════════════════════════════════════════════════════════
+// STREAMHUB PRO - CLIENT-SIDE JAVASCRIPT
+// Professional Streaming Dashboard with Real-time Metrics
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Generate new stream key
 async function generateKey() {
     const name = document.getElementById('streamName').value || 'Unnamed Stream';
 
@@ -11,49 +16,92 @@ async function generateKey() {
             body: JSON.stringify({ name })
         });
 
+        if (!response.ok) {
+            throw new Error('Failed to generate key');
+        }
+
         const data = await response.json();
 
-        // Отображаем результат - RTMP
+        // Display RTMP details
         document.getElementById('rtmpUrl').value = data.rtmpUrl;
         document.getElementById('rtmpStreamKey').value = data.streamKey;
 
-        // Отображаем результат - SRT
+        // Display SRT details
         document.getElementById('srtUrl').value = data.srtUrl;
 
-        // Общее
+        // Display watch URL
         document.getElementById('watchUrl').value = data.webPlayerUrl;
+
+        // Show result
         document.getElementById('keyResult').style.display = 'block';
 
-        // Очищаем поле ввода
+        // Clear input
         document.getElementById('streamName').value = '';
 
-        // Автоматически обновляем список ключей
-        loadKeys();
+        // Success notification
+        showNotification('✅ Ключ трансляции успешно создан!', 'success');
 
-        // Показываем уведомление
-        showNotification('✅ Ключ трансляции успешно создан!');
+        // Auto-load keys list
+        setTimeout(loadKeys, 500);
+
     } catch (error) {
-        console.error('Error generating key:', error);
-        showNotification('❌ Ошибка при создании ключа', 'error');
+        console.error('Error:', error);
+        showNotification('❌ Ошибка при создании ключа: ' + error.message, 'error');
     }
 }
 
-// Копирование в буфер обмена
-function copyToClipboard(elementId) {
+// Switch between SRT and RTMP protocols
+function switchProtocol(protocol) {
+    // Update tab styles
+    const tabs = document.querySelectorAll('.protocol-tab');
+    tabs.forEach(tab => tab.classList.remove('active'));
+    event.target.classList.add('active');
+
+    // Show/hide protocol sections
+    if (protocol === 'srt') {
+        document.getElementById('srtProtocol').style.display = 'block';
+        document.getElementById('rtmpProtocol').style.display = 'none';
+    } else {
+        document.getElementById('srtProtocol').style.display = 'none';
+        document.getElementById('rtmpProtocol').style.display = 'block';
+    }
+}
+
+// Copy to clipboard
+async function copyToClipboard(elementId) {
     const input = document.getElementById(elementId);
-    input.select();
-    document.execCommand('copy');
+    const text = input.value;
 
-    showNotification('📋 Скопировано в буфер обмена!');
+    try {
+        await navigator.clipboard.writeText(text);
+
+        // Visual feedback
+        const originalBg = input.style.background;
+        input.style.background = 'var(--success)';
+        input.style.color = 'var(--bg-primary)';
+
+        setTimeout(() => {
+            input.style.background = originalBg;
+            input.style.color = '';
+        }, 300);
+
+        showNotification('📋 Скопировано в буфер обмена!', 'success');
+    } catch (error) {
+        console.error('Failed to copy:', error);
+        // Fallback
+        input.select();
+        document.execCommand('copy');
+        showNotification('📋 Скопировано!', 'success');
+    }
 }
 
-// Открыть страницу просмотра
+// Open watch page
 function openWatch() {
-    const watchUrl = document.getElementById('watchUrl').value;
-    window.open(watchUrl, '_blank');
+    const url = document.getElementById('watchUrl').value;
+    window.open(url, '_blank');
 }
 
-// Загрузка списка ключей
+// Load all stream keys
 async function loadKeys() {
     try {
         const response = await fetch('/api/keys');
@@ -62,33 +110,45 @@ async function loadKeys() {
         const keysList = document.getElementById('keysList');
 
         if (keys.length === 0) {
-            keysList.innerHTML = '<p class="placeholder">Нет созданных ключей трансляции</p>';
+            keysList.innerHTML = '<p class="placeholder">Нет активных ключей трансляции</p>';
             return;
         }
 
         keysList.innerHTML = keys.map(key => `
-            <div class="key-item ${key.isLive ? 'live' : ''}">
+            <div class="key-item ${key.is_live ? 'live' : ''}">
                 <h4>
-                    ${key.name}
-                    ${key.isLive ? '<span class="status-badge status-live">🔴 В ЭФИРЕ</span>' : '<span class="status-badge status-offline">⚫ ОФФЛАЙН</span>'}
+                    ${escapeHtml(key.name)}
+                    <span class="status-badge ${key.is_live ? 'status-live' : 'status-offline'}">
+                        ${key.is_live ? 'LIVE' : 'Offline'}
+                    </span>
                 </h4>
                 <p><strong>Ключ:</strong> <code>${key.key}</code></p>
-                <p><strong>Создан:</strong> ${new Date(key.createdAt).toLocaleString('ru-RU')}</p>
-                ${key.isLive && key.startedAt ? `<p><strong>Начало трансляции:</strong> ${new Date(key.startedAt).toLocaleString('ru-RU')}</p>` : ''}
-                <p><strong>RTMP URL:</strong> <code>rtmp://localhost:1935/live/${key.key}</code></p>
-                <button onclick="window.open('watch.html?key=${key.key}', '_blank')" class="btn-watch">📺 Смотреть</button>
-                ${!key.isLive ? `<button onclick="deleteKey('${key.key}')" class="btn-delete">🗑️ Удалить</button>` : ''}
+                <p><strong>SRT Port:</strong> <code>${key.srt_port}</code></p>
+                <p><strong>Создан:</strong> ${formatDate(key.created_at)}</p>
+                ${key.is_live ? `<p class="text-success"><strong>▶ Трансляция началась:</strong> ${formatDate(key.started_at)}</p>` : ''}
+                ${!key.is_live && key.ended_at ? `<p class="text-tertiary"><strong>Последняя трансляция:</strong> ${formatDate(key.ended_at)}</p>` : ''}
+                <div style="margin-top: 12px;">
+                    <button onclick="window.open('/watch.html?key=${key.key}', '_blank')" class="btn-watch">
+                        📺 Смотреть
+                    </button>
+                    ${!key.is_live ? `
+                        <button onclick="deleteKey('${key.key}')" class="btn-delete">
+                            🗑️ Удалить
+                        </button>
+                    ` : ''}
+                </div>
             </div>
         `).join('');
+
     } catch (error) {
         console.error('Error loading keys:', error);
-        showNotification('❌ Ошибка при загрузке ключей', 'error');
+        showNotification('❌ Ошибка загрузки ключей', 'error');
     }
 }
 
-// Удаление ключа
+// Delete stream key
 async function deleteKey(key) {
-    if (!confirm('Вы уверены, что хотите удалить этот ключ?')) {
+    if (!confirm('Вы уверены, что хотите удалить этот ключ трансляции?')) {
         return;
     }
 
@@ -97,48 +157,80 @@ async function deleteKey(key) {
             method: 'DELETE'
         });
 
-        if (response.ok) {
-            showNotification('✅ Ключ успешно удален');
-            loadKeys();
-        } else {
+        if (!response.ok) {
             const error = await response.json();
-            showNotification(`❌ ${error.error}`, 'error');
+            throw new Error(error.error || 'Failed to delete key');
         }
+
+        showNotification('✅ Ключ успешно удален', 'success');
+        loadKeys();
+
     } catch (error) {
         console.error('Error deleting key:', error);
-        showNotification('❌ Ошибка при удалении ключа', 'error');
+        showNotification('❌ Ошибка: ' + error.message, 'error');
     }
 }
 
-// Показать уведомление
-function showNotification(message, type = 'success') {
-    // Создаем элемент уведомления
+// Notification system
+function showNotification(message, type = 'info') {
+    // Remove existing notifications
+    const existing = document.querySelector('.notification');
+    if (existing) {
+        existing.remove();
+    }
+
+    const colors = {
+        success: 'var(--success)',
+        error: 'var(--error)',
+        warning: 'var(--warning)',
+        info: 'var(--info)'
+    };
+
     const notification = document.createElement('div');
+    notification.className = 'notification';
     notification.textContent = message;
     notification.style.cssText = `
         position: fixed;
         top: 20px;
         right: 20px;
-        padding: 15px 25px;
-        background: ${type === 'success' ? '#4CAF50' : '#f44336'};
+        background: ${colors[type] || colors.info};
         color: white;
+        padding: 16px 24px;
         border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        font-weight: 600;
         z-index: 10000;
         animation: slideIn 0.3s ease-out;
-        font-weight: 600;
     `;
 
     document.body.appendChild(notification);
 
-    // Удаляем через 3 секунды
     setTimeout(() => {
-        notification.style.animation = 'slideOut 0.3s ease-out';
+        notification.style.animation = 'slideOut 0.3s ease-in';
         setTimeout(() => notification.remove(), 300);
     }, 3000);
 }
 
-// Добавляем CSS анимации
+// Utility functions
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function formatDate(dateString) {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleString('ru-RU', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+// Add CSS animations
 const style = document.createElement('style');
 style.textContent = `
     @keyframes slideIn {
@@ -165,7 +257,29 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-// Автоматически загружаем ключи при загрузке страницы
-if (window.location.pathname === '/' || window.location.pathname.includes('index.html')) {
-    window.addEventListener('load', loadKeys);
-}
+// Auto-load keys on page load
+window.addEventListener('load', () => {
+    loadKeys();
+    console.log('🚀 StreamHub Pro initialized');
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    // Ctrl/Cmd + K: Focus stream name input
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        document.getElementById('streamName').focus();
+    }
+
+    // Ctrl/Cmd + Enter: Generate key
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        generateKey();
+    }
+
+    // Ctrl/Cmd + R: Reload keys
+    if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+        e.preventDefault();
+        loadKeys();
+    }
+});

@@ -24,6 +24,13 @@ const config = {
 // Хранилище FFmpeg процессов для каждого стрима
 const ffmpegProcesses = new Map();
 
+// Хранилище SRT listeners
+const srtListeners = new Map();
+
+// SRT порты (динамические)
+const SRT_BASE_PORT = 9000;
+let srtPortCounter = 0;
+
 // Создаем необходимые директории
 const dirs = ['./media', './media/live'];
 dirs.forEach(dir => {
@@ -34,6 +41,75 @@ dirs.forEach(dir => {
 
 // Хранилище ключей трансляции (в реальном приложении используйте БД)
 const streamKeys = new Map();
+
+// Функция для запуска SRT listener для stream key
+function startSRTListener(streamKey, srtPort) {
+  const hlsDir = `./media/live/${streamKey}`;
+
+  if (!fs.existsSync(hlsDir)) {
+    fs.mkdirSync(hlsDir, { recursive: true });
+  }
+
+  const hlsPath = `${hlsDir}/index.m3u8`;
+  const srtUrl = `srt://0.0.0.0:${srtPort}?mode=listener`;
+
+  console.log(`[SRT] Starting listener on port ${srtPort} for ${streamKey}`);
+
+  // Запускаем FFmpeg в режиме SRT listener
+  // Это позволяет принимать ЛЮБОЙ кодек (AV1, HEVC, H.264, VP9, etc.)
+  const ffmpeg = spawn('ffmpeg', [
+    '-i', srtUrl,
+    '-c:v', 'copy',                 // Копируем видео как есть (без перекодирования!)
+    '-c:a', 'aac',                  // Аудио в AAC
+    '-b:a', '192k',
+    '-ar', '48000',
+    '-f', 'hls',
+    '-hls_time', '2',
+    '-hls_list_size', '5',
+    '-hls_flags', 'delete_segments+append_list',
+    '-hls_segment_type', 'mpegts',
+    '-hls_segment_filename', `${hlsDir}/segment%03d.ts`,
+    hlsPath
+  ]);
+
+  let isActive = false;
+
+  ffmpeg.stdout.on('data', (data) => {
+    console.log(`[SRT FFmpeg] ${streamKey}: ${data}`);
+  });
+
+  ffmpeg.stderr.on('data', (data) => {
+    const output = data.toString();
+
+    // Определяем когда клиент подключился
+    if (output.includes('Opening') || output.includes('Stream')) {
+      if (!isActive && streamKeys.has(streamKey)) {
+        isActive = true;
+        const keyData = streamKeys.get(streamKey);
+        keyData.isLive = true;
+        keyData.startedAt = new Date().toISOString();
+        console.log(`[SRT] Client connected to ${streamKey}`);
+      }
+    }
+
+    console.log(`[SRT FFmpeg] ${streamKey}: ${output}`);
+  });
+
+  ffmpeg.on('close', (code) => {
+    console.log(`[SRT] FFmpeg listener for ${streamKey} exited with code ${code}`);
+
+    if (streamKeys.has(streamKey)) {
+      const keyData = streamKeys.get(streamKey);
+      keyData.isLive = false;
+      keyData.endedAt = new Date().toISOString();
+    }
+
+    srtListeners.delete(streamKey);
+  });
+
+  srtListeners.set(streamKey, { ffmpeg, port: srtPort });
+  return srtPort;
+}
 
 // Создаем RTMP сервер
 const nms = new NodeMediaServer(config);
@@ -205,18 +281,44 @@ app.post('/api/generate-key', (req, res) => {
   const { name } = req.body;
   const streamKey = uuidv4();
 
+  // Выделяем порт для SRT
+  const srtPort = SRT_BASE_PORT + srtPortCounter;
+  srtPortCounter++;
+
   streamKeys.set(streamKey, {
     name: name || 'Unnamed Stream',
     createdAt: new Date().toISOString(),
-    isLive: false
+    isLive: false,
+    srtPort
   });
+
+  // Запускаем SRT listener для этого ключа
+  startSRTListener(streamKey, srtPort);
 
   res.json({
     streamKey,
+    // RTMP endpoints (H.264 only)
     rtmpUrl: `rtmp://localhost:1935/live`,
-    fullUrl: `rtmp://localhost:1935/live/${streamKey}`,
+    rtmpFullUrl: `rtmp://localhost:1935/live/${streamKey}`,
+    // SRT endpoints (ANY codec: AV1, HEVC, H.264, VP9, etc.)
+    srtUrl: `srt://localhost:${srtPort}?mode=caller`,
+    srtPort,
+    // Common
     hlsUrl: `http://localhost:8000/live/${streamKey}/index.m3u8`,
-    webPlayerUrl: `http://localhost:3000/watch.html?key=${streamKey}`
+    webPlayerUrl: `http://localhost:3000/watch.html?key=${streamKey}`,
+    // Info
+    protocols: {
+      rtmp: {
+        url: `rtmp://localhost:1935/live/${streamKey}`,
+        codecs: ['H.264'],
+        note: 'Use this for compatibility (H.264 only)'
+      },
+      srt: {
+        url: `srt://localhost:${srtPort}?mode=caller`,
+        codecs: ['AV1', 'HEVC', 'H.264', 'VP9', 'VP8'],
+        note: 'Use this for any modern codec (recommended)'
+      }
+    }
   });
 });
 
@@ -257,6 +359,14 @@ app.delete('/api/key/:key', (req, res) => {
     return res.status(400).json({ error: 'Cannot delete a live stream' });
   }
 
+  // Останавливаем SRT listener
+  if (srtListeners.has(key)) {
+    const { ffmpeg } = srtListeners.get(key);
+    ffmpeg.kill('SIGINT');
+    srtListeners.delete(key);
+    console.log(`[SRT] Stopped listener for ${key}`);
+  }
+
   streamKeys.delete(key);
   res.json({ success: true });
 });
@@ -264,17 +374,23 @@ app.delete('/api/key/:key', (req, res) => {
 // Запускаем веб-сервер
 const WEB_PORT = 3000;
 app.listen(WEB_PORT, () => {
-  console.log('='.repeat(60));
-  console.log('🚀 RTMP Streaming Server Started!');
-  console.log('='.repeat(60));
+  console.log('='.repeat(70));
+  console.log('🚀 RTMP + SRT Streaming Server Started!');
+  console.log('='.repeat(70));
   console.log(`📺 Web Interface: http://localhost:${WEB_PORT}`);
-  console.log(`📡 RTMP Server: rtmp://localhost:1935/live`);
+  console.log(`📡 RTMP Server: rtmp://localhost:1935/live (H.264 only)`);
+  console.log(`🎯 SRT Server: Dynamic ports starting from ${SRT_BASE_PORT} (ANY codec!)`);
   console.log(`🎬 Media Server: http://localhost:8000`);
-  console.log('='.repeat(60));
+  console.log('='.repeat(70));
   console.log('\n📝 Instructions:');
   console.log('1. Open http://localhost:3000 in your browser');
   console.log('2. Generate a stream key');
-  console.log('3. Configure OBS with the provided RTMP URL and stream key');
-  console.log('4. Start streaming!');
-  console.log('='.repeat(60));
+  console.log('3. Choose protocol:');
+  console.log('   • RTMP - For H.264 codec (compatible)');
+  console.log('   • SRT  - For ANY codec (AV1, HEVC, H.264, VP9) ⭐ RECOMMENDED');
+  console.log('4. Configure OBS and start streaming!');
+  console.log('='.repeat(70));
+  console.log('\n✨ NEW: SRT support allows streaming with ANY video codec!');
+  console.log('   Use your RTX 4080 with AV1 codec for best quality! 🚀');
+  console.log('='.repeat(70));
 });

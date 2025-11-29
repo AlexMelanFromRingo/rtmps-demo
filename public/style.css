@@ -383,3 +383,73 @@ input[type="text"][readonly] {
         padding: 20px;
     }
 }
+
+/* Protocol tabs */
+.protocol-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.protocol-tab {
+    flex: 1;
+    padding: 12px 20px;
+    border: 2px solid #e0e0e0;
+    background: white;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.95em;
+    transition: all 0.3s;
+}
+
+.protocol-tab:hover {
+    border-color: #667eea;
+    background: #f5f7ff;
+}
+
+.protocol-tab.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-color: #667eea;
+}
+
+/* Protocol sections */
+.protocol-section {
+    animation: fadeIn 0.3s;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Protocol badges */
+.protocol-badge {
+    padding: 12px 20px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.srt-badge {
+    background: #e7f5ff;
+    color: #1971c2;
+    border: 2px solid #74c0fc;
+}
+
+.rtmp-badge {
+    background: #fff3cd;
+    color: #856404;
+    border: 2px solid #ffc107;
+}
+
+/* Hint text */
+.hint {
+    display: block;
+    margin-top: 5px;
+    color: #666;
+    font-size: 0.85em;
+    font-style: italic;
+}

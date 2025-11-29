@@ -13,9 +13,15 @@ async function generateKey() {
 
         const data = await response.json();
 
-        // Отображаем результат
+        // Отображаем результат - RTMP
         document.getElementById('rtmpUrl').value = data.rtmpUrl;
-        document.getElementById('streamKey').value = data.streamKey;
+        document.getElementById('rtmpStreamKey').value = data.streamKey;
+
+        // Отображаем результат - SRT
+        document.getElementById('srtUrl').value = data.srtUrl;
+        document.getElementById('srtPort').textContent = data.srtPort;
+
+        // Общее
         document.getElementById('watchUrl').value = data.webPlayerUrl;
         document.getElementById('keyResult').style.display = 'block';
 

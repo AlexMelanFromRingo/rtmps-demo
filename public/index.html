@@ -23,42 +23,103 @@
             <div id="keyResult" class="key-result" style="display: none;">
                 <h3>✅ Ключ трансляции создан!</h3>
 
-                <div class="info-block">
-                    <label>🎯 RTMP URL для OBS:</label>
-                    <div class="copy-group">
-                        <input type="text" id="rtmpUrl" readonly>
-                        <button onclick="copyToClipboard('rtmpUrl')" class="btn-copy">📋</button>
+                <div class="protocol-tabs">
+                    <button class="protocol-tab active" onclick="switchProtocol('srt')">🎯 SRT (Рекомендуется - ANY кодек!)</button>
+                    <button class="protocol-tab" onclick="switchProtocol('rtmp')">📡 RTMP (H.264 only)</button>
+                </div>
+
+                <div id="srtProtocol" class="protocol-section">
+                    <div class="protocol-badge srt-badge">
+                        ⭐ РЕКОМЕНДУЕТСЯ: Поддерживает AV1, HEVC, H.264, VP9
+                    </div>
+
+                    <div class="info-block">
+                        <label>🎯 SRT URL для OBS:</label>
+                        <div class="copy-group">
+                            <input type="text" id="srtUrl" readonly>
+                            <button onclick="copyToClipboard('srtUrl')" class="btn-copy">📋</button>
+                        </div>
+                        <small class="hint">Используйте AV1 кодек на вашей RTX 4080 для лучшего качества!</small>
+                    </div>
+
+                    <div class="obs-instructions">
+                        <h4>📝 Инструкция для SRT в OBS:</h4>
+                        <ol>
+                            <li>Откройте <strong>OBS Studio</strong></li>
+                            <li>Перейдите в <strong>Настройки → Трансляция</strong></li>
+                            <li>Выберите <strong>Пользовательский...</strong></li>
+                            <li>Вставьте SRT URL в поле <strong>"Сервер"</strong></li>
+                            <li><strong>Настройки → Вывод:</strong></li>
+                            <li style="margin-left: 20px">• Кодировщик: <strong>AV1 NVENC</strong> или <strong>HEVC NVENC</strong> ✨</li>
+                            <li style="margin-left: 20px">• Битрейт: 6000-10000 Kbps</li>
+                            <li>Нажмите <strong>OK</strong> и <strong>Начать трансляцию</strong></li>
+                        </ol>
                     </div>
                 </div>
 
-                <div class="info-block">
-                    <label>🔐 Ключ потока (Stream Key):</label>
-                    <div class="copy-group">
-                        <input type="text" id="streamKey" readonly>
-                        <button onclick="copyToClipboard('streamKey')" class="btn-copy">📋</button>
+                <div id="rtmpProtocol" class="protocol-section" style="display: none;">
+                    <div class="protocol-badge rtmp-badge">
+                        ⚠️ Совместимость: Только H.264 кодек
+                    </div>
+
+                    <div class="info-block">
+                        <label>📡 RTMP URL для OBS:</label>
+                        <div class="copy-group">
+                            <input type="text" id="rtmpUrl" readonly>
+                            <button onclick="copyToClipboard('rtmpUrl')" class="btn-copy">📋</button>
+                        </div>
+                    </div>
+
+                    <div class="info-block">
+                        <label>🔐 Ключ потока (Stream Key):</label>
+                        <div class="copy-group">
+                            <input type="text" id="rtmpStreamKey" readonly>
+                            <button onclick="copyToClipboard('rtmpStreamKey')" class="btn-copy">📋</button>
+                        </div>
+                    </div>
+
+                    <div class="obs-instructions">
+                        <h4>📝 Инструкция для RTMP в OBS:</h4>
+                        <ol>
+                            <li>Откройте <strong>OBS Studio</strong></li>
+                            <li>Перейдите в <strong>Настройки → Трансляция</strong></li>
+                            <li>Выберите <strong>Пользовательский...</strong></li>
+                            <li>Вставьте <strong>RTMP URL</strong> в поле "Сервер"</li>
+                            <li>Вставьте <strong>Ключ потока</strong> в поле "Ключ потока"</li>
+                            <li><strong>Настройки → Вывод:</strong></li>
+                            <li style="margin-left: 20px">• Кодировщик: <strong>NVIDIA NVENC H.264</strong> (обязательно!)</li>
+                            <li>Нажмите <strong>OK</strong> и <strong>Начать трансляцию</strong></li>
+                        </ol>
                     </div>
                 </div>
 
-                <div class="info-block">
+                <div class="info-block" style="margin-top: 20px;">
                     <label>📺 Ссылка для просмотра:</label>
                     <div class="copy-group">
                         <input type="text" id="watchUrl" readonly>
                         <button onclick="openWatch()" class="btn-open">🚀 Открыть</button>
                     </div>
                 </div>
-
-                <div class="obs-instructions">
-                    <h4>📝 Инструкция для OBS Studio:</h4>
-                    <ol>
-                        <li>Откройте <strong>OBS Studio</strong></li>
-                        <li>Перейдите в <strong>Настройки → Трансляция</strong></li>
-                        <li>Выберите <strong>Пользовательский...</strong> в поле "Служба"</li>
-                        <li>Вставьте <strong>RTMP URL</strong> в поле "Сервер"</li>
-                        <li>Вставьте <strong>Ключ потока</strong> в поле "Ключ потока"</li>
-                        <li>Нажмите <strong>OK</strong> и <strong>Начать трансляцию</strong></li>
-                    </ol>
-                </div>
             </div>
+
+            <script>
+            function switchProtocol(protocol) {
+                // Переключаем табы
+                document.querySelectorAll('.protocol-tab').forEach(tab => {
+                    tab.classList.remove('active');
+                });
+                event.target.classList.add('active');
+
+                // Показываем нужную секцию
+                if (protocol === 'srt') {
+                    document.getElementById('srtProtocol').style.display = 'block';
+                    document.getElementById('rtmpProtocol').style.display = 'none';
+                } else {
+                    document.getElementById('srtProtocol').style.display = 'none';
+                    document.getElementById('rtmpProtocol').style.display = 'block';
+                }
+            }
+            </script>
         </div>
 
         <div class="card">
@@ -72,10 +133,12 @@
         <div class="card info-card">
             <h2>ℹ️ Информация о сервере</h2>
             <ul>
-                <li><strong>RTMP порт:</strong> 1935</li>
+                <li><strong>RTMP порт:</strong> 1935 (H.264 only)</li>
+                <li><strong>SRT порты:</strong> Динамические 9000+ (ANY codec) ⭐</li>
                 <li><strong>Web порт:</strong> 3000</li>
                 <li><strong>Media порт:</strong> 8000</li>
-                <li><strong>Протокол:</strong> RTMP → HLS</li>
+                <li><strong>Протоколы:</strong> RTMP → HLS, SRT → HLS</li>
+                <li><strong>Поддерживаемые кодеки (SRT):</strong> AV1, HEVC, H.264, VP9, VP8</li>
             </ul>
         </div>
     </div>

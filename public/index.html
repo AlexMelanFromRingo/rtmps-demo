@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTMP Streaming Server - Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📡 RTMP Streaming Server</h1>
+            <p class="subtitle">Ваш личный стриминговый сервис</p>
+        </header>
+
+        <div class="card">
+            <h2>🔑 Генерация ключа трансляции</h2>
+            <div class="form-group">
+                <input type="text" id="streamName" placeholder="Название трансляции (опционально)">
+                <button onclick="generateKey()" class="btn btn-primary">Создать ключ трансляции</button>
+            </div>
+
+            <div id="keyResult" class="key-result" style="display: none;">
+                <h3>✅ Ключ трансляции создан!</h3>
+
+                <div class="info-block">
+                    <label>🎯 RTMP URL для OBS:</label>
+                    <div class="copy-group">
+                        <input type="text" id="rtmpUrl" readonly>
+                        <button onclick="copyToClipboard('rtmpUrl')" class="btn-copy">📋</button>
+                    </div>
+                </div>
+
+                <div class="info-block">
+                    <label>🔐 Ключ потока (Stream Key):</label>
+                    <div class="copy-group">
+                        <input type="text" id="streamKey" readonly>
+                        <button onclick="copyToClipboard('streamKey')" class="btn-copy">📋</button>
+                    </div>
+                </div>
+
+                <div class="info-block">
+                    <label>📺 Ссылка для просмотра:</label>
+                    <div class="copy-group">
+                        <input type="text" id="watchUrl" readonly>
+                        <button onclick="openWatch()" class="btn-open">🚀 Открыть</button>
+                    </div>
+                </div>
+
+                <div class="obs-instructions">
+                    <h4>📝 Инструкция для OBS Studio:</h4>
+                    <ol>
+                        <li>Откройте <strong>OBS Studio</strong></li>
+                        <li>Перейдите в <strong>Настройки → Трансляция</strong></li>
+                        <li>Выберите <strong>Пользовательский...</strong> в поле "Служба"</li>
+                        <li>Вставьте <strong>RTMP URL</strong> в поле "Сервер"</li>
+                        <li>Вставьте <strong>Ключ потока</strong> в поле "Ключ потока"</li>
+                        <li>Нажмите <strong>OK</strong> и <strong>Начать трансляцию</strong></li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📋 Список ключей трансляции</h2>
+            <button onclick="loadKeys()" class="btn btn-secondary">🔄 Обновить список</button>
+            <div id="keysList" class="keys-list">
+                <p class="placeholder">Нажмите "Обновить список" для загрузки ключей</p>
+            </div>
+        </div>
+
+        <div class="card info-card">
+            <h2>ℹ️ Информация о сервере</h2>
+            <ul>
+                <li><strong>RTMP порт:</strong> 1935</li>
+                <li><strong>Web порт:</strong> 3000</li>
+                <li><strong>Media порт:</strong> 8000</li>
+                <li><strong>Протокол:</strong> RTMP → HLS</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

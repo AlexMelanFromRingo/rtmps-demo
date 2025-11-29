@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Просмотр трансляции - RTMP Streaming</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://vjs.zencdn.net/8.6.1/video-js.css" rel="stylesheet" />
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📺 Просмотр трансляции</h1>
+            <a href="index.html" class="btn btn-secondary">← Назад к панели</a>
+        </header>
+
+        <div class="card">
+            <div id="streamStatus" class="stream-status">
+                <div class="status-indicator"></div>
+                <span id="statusText">Загрузка...</span>
+            </div>
+
+            <div class="video-container">
+                <video
+                    id="videoPlayer"
+                    class="video-js vjs-big-play-centered"
+                    controls
+                    preload="auto"
+                    width="100%"
+                    data-setup='{"liveui": true}'>
+                </video>
+            </div>
+
+            <div id="streamInfo" class="stream-info" style="display: none;">
+                <h3>Информация о трансляции</h3>
+                <p><strong>Название:</strong> <span id="streamName"></span></p>
+                <p><strong>Статус:</strong> <span id="streamLiveStatus"></span></p>
+                <p><strong>Создано:</strong> <span id="streamCreated"></span></p>
+                <p id="streamStarted" style="display: none;"><strong>Начато:</strong> <span id="streamStartedTime"></span></p>
+            </div>
+
+            <div class="instructions">
+                <h4>💡 Подсказка:</h4>
+                <p>Если трансляция не запускается:</p>
+                <ul>
+                    <li>Убедитесь, что OBS отправляет поток на сервер</li>
+                    <li>Проверьте, что используется правильный ключ трансляции</li>
+                    <li>Подождите несколько секунд после начала трансляции в OBS</li>
+                    <li>Попробуйте обновить страницу</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://vjs.zencdn.net/8.6.1/video.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@videojs/http-streaming@3.5.3/dist/videojs-http-streaming.min.js"></script>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const streamKey = urlParams.get('key');
+
+        if (!streamKey) {
+            document.querySelector('.container').innerHTML = `
+                <div class="card">
+                    <h2>❌ Ошибка</h2>
+                    <p>Не указан ключ трансляции</p>
+                    <a href="index.html" class="btn btn-primary">Вернуться на главную</a>
+                </div>
+            `;
+        } else {
+            // Инициализируем плеер
+            const player = videojs('videoPlayer', {
+                autoplay: true,
+                muted: true,
+                controls: true,
+                liveui: true,
+                fluid: true,
+                aspectRatio: '16:9'
+            });
+
+            // URL HLS потока
+            const hlsUrl = `http://localhost:8000/live/${streamKey}/index.m3u8`;
+
+            // Загружаем информацию о трансляции
+            fetch(`/api/key/${streamKey}`)
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('streamName').textContent = data.name;
+                    document.getElementById('streamCreated').textContent = new Date(data.createdAt).toLocaleString('ru-RU');
+
+                    if (data.isLive) {
+                        document.getElementById('streamLiveStatus').innerHTML = '<span class="status-live">🔴 В эфире</span>';
+                        document.querySelector('.status-indicator').classList.add('live');
+                        document.getElementById('statusText').textContent = 'Трансляция активна';
+
+                        if (data.startedAt) {
+                            document.getElementById('streamStarted').style.display = 'block';
+                            document.getElementById('streamStartedTime').textContent = new Date(data.startedAt).toLocaleString('ru-RU');
+                        }
+
+                        // Загружаем поток
+                        player.src({
+                            src: hlsUrl,
+                            type: 'application/x-mpegURL'
+                        });
+                    } else {
+                        document.getElementById('streamLiveStatus').innerHTML = '<span class="status-offline">⚫ Не в сети</span>';
+                        document.querySelector('.status-indicator').classList.add('offline');
+                        document.getElementById('statusText').textContent = 'Трансляция не активна';
+                        document.querySelector('.video-container').innerHTML = `
+                            <div class="offline-placeholder">
+                                <h2>📴 Трансляция не активна</h2>
+                                <p>Стример сейчас оффлайн</p>
+                            </div>
+                        `;
+                    }
+
+                    document.getElementById('streamInfo').style.display = 'block';
+                })
+                .catch(err => {
+                    console.error('Error loading stream info:', err);
+                    document.getElementById('statusText').textContent = 'Ошибка загрузки информации';
+                });
+
+            // Проверяем статус каждые 5 секунд
+            setInterval(() => {
+                fetch(`/api/key/${streamKey}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.isLive) {
+                            document.querySelector('.status-indicator').classList.remove('offline');
+                            document.querySelector('.status-indicator').classList.add('live');
+                            document.getElementById('statusText').textContent = 'Трансляция активна';
+                        } else {
+                            document.querySelector('.status-indicator').classList.remove('live');
+                            document.querySelector('.status-indicator').classList.add('offline');
+                            document.getElementById('statusText').textContent = 'Трансляция не активна';
+                        }
+                    });
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

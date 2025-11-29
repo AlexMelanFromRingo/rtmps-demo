@@ -116,16 +116,54 @@ nms.on('postPublish', (id, StreamPath, args) => {
       hlsPath
     ]);
 
+    let ffmpegLog = '';
+    let codecErrorDetected = false;
+
     ffmpeg.stdout.on('data', (data) => {
       console.log(`[FFmpeg] ${streamKey}: ${data}`);
     });
 
     ffmpeg.stderr.on('data', (data) => {
-      console.log(`[FFmpeg] ${streamKey}: ${data}`);
+      const output = data.toString();
+      ffmpegLog += output;
+
+      // Проверяем на ошибку кодека
+      if (output.includes('Video codec') && output.includes('is not implemented')) {
+        codecErrorDetected = true;
+        console.error('\n' + '='.repeat(70));
+        console.error('❌ ОШИБКА: НЕПОДДЕРЖИВАЕМЫЙ ВИДЕО КОДЕК');
+        console.error('='.repeat(70));
+        console.error('OBS отправляет видео в кодеке, который не поддерживается RTMP.');
+        console.error('');
+        console.error('РЕШЕНИЕ:');
+        console.error('1. Откройте OBS → Настройки → Вывод');
+        console.error('2. Режим вывода: "Расширенный"');
+        console.error('3. Кодировщик видео: "NVIDIA NVENC H.264"');
+        console.error('   (НЕ AV1, НЕ HEVC!)');
+        console.error('4. Применить → OK → Перезапустите OBS');
+        console.error('5. Начните трансляцию заново');
+        console.error('');
+        console.error('📖 Подробная инструкция: cat TROUBLESHOOTING.md');
+        console.error('='.repeat(70) + '\n');
+      }
+
+      // Определяем кодек из логов FFmpeg
+      if (output.includes('Video: none ([13][0][0][0]') || output.includes('0x000D')) {
+        console.error('⚠️  Обнаружен AV1 кодек (0x0D) - не поддерживается RTMP!');
+      }
+
+      console.log(`[FFmpeg] ${streamKey}: ${output}`);
     });
 
     ffmpeg.on('close', (code) => {
       console.log(`[FFmpeg] ${streamKey} process exited with code ${code}`);
+
+      if (codecErrorDetected && code !== 0) {
+        console.error(`\n❌ Транскодирование не удалось для ${streamKey}`);
+        console.error('   Причина: Неподдерживаемый видео кодек от OBS');
+        console.error('   Смените кодек на H.264 в настройках OBS!\n');
+      }
+
       ffmpegProcesses.delete(streamKey);
     });
 

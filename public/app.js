@@ -19,7 +19,6 @@ async function generateKey() {
 
         // Отображаем результат - SRT
         document.getElementById('srtUrl').value = data.srtUrl;
-        document.getElementById('srtPort').textContent = data.srtPort;
 
         // Общее
         document.getElementById('watchUrl').value = data.webPlayerUrl;

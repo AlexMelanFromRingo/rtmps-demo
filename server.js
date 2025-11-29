@@ -93,15 +93,26 @@ nms.on('postPublish', (id, StreamPath, args) => {
     console.log(`[FFmpeg] Starting transcoding: ${rtmpUrl} -> ${hlsPath}`);
 
     // Запускаем FFmpeg для конвертации RTMP в HLS
+    // Декодируем входящий поток и перекодируем в H.264 для совместимости
     const ffmpeg = spawn('ffmpeg', [
       '-i', rtmpUrl,
-      '-c:v', 'copy',
-      '-c:a', 'aac',
-      '-f', 'hls',
-      '-hls_time', '2',
-      '-hls_list_size', '3',
-      '-hls_flags', 'delete_segments',
+      '-c:v', 'libx264',              // Перекодируем в H.264
+      '-preset', 'veryfast',          // Быстрое кодирование
+      '-crf', '23',                   // Качество (18-28, меньше = лучше)
+      '-maxrate', '6000k',            // Максимальный битрейт для 1440p
+      '-bufsize', '12000k',           // Буфер
+      '-g', '60',                     // GOP size (keyframe interval)
+      '-sc_threshold', '0',           // Disable scene change detection
+      '-c:a', 'aac',                  // Аудио кодек
+      '-b:a', '192k',                 // Битрейт аудио
+      '-ar', '48000',                 // Sample rate
+      '-f', 'hls',                    // HLS формат
+      '-hls_time', '2',               // Длина сегмента (секунды)
+      '-hls_list_size', '5',          // Количество сегментов в плейлисте
+      '-hls_flags', 'delete_segments+append_list',
+      '-hls_segment_type', 'mpegts',
       '-hls_segment_filename', `${hlsDir}/segment%03d.ts`,
+      '-pix_fmt', 'yuv420p',          // Pixel format для совместимости
       hlsPath
     ]);
 

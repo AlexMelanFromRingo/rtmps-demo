@@ -6,6 +6,131 @@
     <title>Просмотр трансляции - RTMP Streaming</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://vjs.zencdn.net/8.6.1/video-js.css" rel="stylesheet" />
+    <style>
+        /* Театральный режим */
+        body.theater-mode .container {
+            max-width: 100%;
+            padding: 0;
+        }
+        body.theater-mode .video-wrapper {
+            width: 100vw;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1000;
+            background: #000;
+        }
+        body.theater-mode .stream-controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1001;
+        }
+
+        .video-wrapper {
+            position: relative;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .stream-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .control-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            background: #667eea;
+            color: white;
+        }
+
+        .control-btn:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+
+        .control-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .stream-stats {
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .stat-item {
+            padding: 5px 0;
+        }
+
+        .stat-label {
+            color: #aaa;
+            font-size: 0.85em;
+        }
+
+        .stat-value {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        /* Улучшенный плеер */
+        .video-js {
+            width: 100%;
+            height: auto;
+            min-height: 400px;
+        }
+
+        .video-js .vjs-big-play-button {
+            font-size: 3em;
+            line-height: 1.5em;
+            height: 1.5em;
+            width: 3em;
+            border-radius: 50%;
+            background-color: rgba(102, 126, 234, 0.9);
+            border: none;
+        }
+
+        .video-js .vjs-big-play-button:hover {
+            background-color: rgba(102, 126, 234, 1);
+        }
+
+        /* Качество потока индикатор */
+        .quality-indicator {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            z-index: 10;
+        }
+
+        .quality-hd {
+            background: rgba(76, 175, 80, 0.9);
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -20,15 +145,55 @@
                 <span id="statusText">Загрузка...</span>
             </div>
 
-            <div class="video-container">
+            <div class="video-wrapper">
+                <div id="qualityIndicator" class="quality-indicator" style="display: none;">
+                    <span id="resolutionText">Loading...</span>
+                </div>
                 <video
                     id="videoPlayer"
                     class="video-js vjs-big-play-centered"
                     controls
                     preload="auto"
-                    width="100%"
-                    data-setup='{"liveui": true}'>
+                    playsinline>
                 </video>
+            </div>
+
+            <div class="stream-controls">
+                <button id="theaterBtn" class="control-btn">🎭 Театральный режим</button>
+                <button id="pipBtn" class="control-btn" style="display: none;">📺 Picture-in-Picture</button>
+                <button id="fullscreenBtn" class="control-btn">⛶ Полный экран</button>
+                <button id="muteBtn" class="control-btn">🔇 Вкл/Выкл звук</button>
+                <button id="refreshBtn" class="control-btn">🔄 Обновить</button>
+            </div>
+
+            <div id="streamStats" class="stream-stats" style="display: none;">
+                <h4 style="margin-bottom: 10px;">📊 Статистика потока</h4>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Разрешение:</div>
+                        <div class="stat-value" id="statResolution">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">FPS:</div>
+                        <div class="stat-value" id="statFps">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Битрейт:</div>
+                        <div class="stat-value" id="statBitrate">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Задержка:</div>
+                        <div class="stat-value" id="statLatency">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Буфер:</div>
+                        <div class="stat-value" id="statBuffer">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Время в эфире:</div>
+                        <div class="stat-value" id="statUptime">-</div>
+                    </div>
+                </div>
             </div>
 
             <div id="streamInfo" class="stream-info" style="display: none;">
@@ -40,13 +205,14 @@
             </div>
 
             <div class="instructions">
-                <h4>💡 Подсказка:</h4>
-                <p>Если трансляция не запускается:</p>
+                <h4>💡 Управление плеером:</h4>
                 <ul>
-                    <li>Убедитесь, что OBS отправляет поток на сервер</li>
-                    <li>Проверьте, что используется правильный ключ трансляции</li>
-                    <li>Подождите несколько секунд после начала трансляции в OBS</li>
-                    <li>Попробуйте обновить страницу</li>
+                    <li><strong>Театральный режим</strong> - развернуть плеер на весь экран браузера</li>
+                    <li><strong>Picture-in-Picture</strong> - плавающее окно поверх других приложений</li>
+                    <li><strong>Полный экран</strong> - стандартный fullscreen режим</li>
+                    <li><strong>Пробел</strong> - пауза/воспроизведение</li>
+                    <li><strong>F</strong> - полноэкранный режим</li>
+                    <li><strong>M</strong> - вкл/выкл звук</li>
                 </ul>
             </div>
         </div>
@@ -57,6 +223,8 @@
     <script>
         const urlParams = new URLSearchParams(window.location.search);
         const streamKey = urlParams.get('key');
+        let player;
+        let streamStartTime;
 
         if (!streamKey) {
             document.querySelector('.container').innerHTML = `
@@ -67,18 +235,143 @@
                 </div>
             `;
         } else {
-            // Инициализируем плеер
-            const player = videojs('videoPlayer', {
-                autoplay: true,
+            // Инициализируем плеер с улучшенными настройками
+            player = videojs('videoPlayer', {
+                autoplay: 'muted',
                 muted: true,
                 controls: true,
                 liveui: true,
+                preload: 'auto',
                 fluid: true,
-                aspectRatio: '16:9'
+                responsive: true,
+                aspectRatio: '21:9', // Для вашего 3440x1440
+                html5: {
+                    vhs: {
+                        enableLowInitialPlaylist: false,
+                        smoothQualityChange: true,
+                        overrideNative: true
+                    },
+                    nativeAudioTracks: false,
+                    nativeVideoTracks: false
+                }
             });
 
             // URL HLS потока
             const hlsUrl = `http://localhost:8000/live/${streamKey}/index.m3u8`;
+
+            // Кнопки управления
+            const theaterBtn = document.getElementById('theaterBtn');
+            const pipBtn = document.getElementById('pipBtn');
+            const fullscreenBtn = document.getElementById('fullscreenBtn');
+            const muteBtn = document.getElementById('muteBtn');
+            const refreshBtn = document.getElementById('refreshBtn');
+
+            // Театральный режим
+            let isTheaterMode = false;
+            theaterBtn.addEventListener('click', () => {
+                isTheaterMode = !isTheaterMode;
+                document.body.classList.toggle('theater-mode', isTheaterMode);
+                theaterBtn.textContent = isTheaterMode ? '🎬 Обычный режим' : '🎭 Театральный режим';
+            });
+
+            // Picture-in-Picture
+            if (document.pictureInPictureEnabled) {
+                pipBtn.style.display = 'inline-block';
+                pipBtn.addEventListener('click', async () => {
+                    try {
+                        if (document.pictureInPictureElement) {
+                            await document.exitPictureInPicture();
+                        } else {
+                            await player.el().querySelector('video').requestPictureInPicture();
+                        }
+                    } catch (err) {
+                        console.error('PiP error:', err);
+                    }
+                });
+            }
+
+            // Полноэкранный режим
+            fullscreenBtn.addEventListener('click', () => {
+                if (player.isFullscreen()) {
+                    player.exitFullscreen();
+                } else {
+                    player.requestFullscreen();
+                }
+            });
+
+            // Мут
+            muteBtn.addEventListener('click', () => {
+                player.muted(!player.muted());
+                muteBtn.textContent = player.muted() ? '🔇 Включить звук' : '🔊 Выключить звук';
+            });
+
+            // Обновить поток
+            refreshBtn.addEventListener('click', () => {
+                player.src({ src: hlsUrl, type: 'application/x-mpegURL' });
+                player.load();
+                player.play();
+            });
+
+            // Обработчики событий плеера
+            player.on('loadedmetadata', () => {
+                const videoEl = player.el().querySelector('video');
+                const resolution = `${videoEl.videoWidth}x${videoEl.videoHeight}`;
+                document.getElementById('statResolution').textContent = resolution;
+                document.getElementById('resolutionText').textContent = resolution;
+
+                const qualityIndicator = document.getElementById('qualityIndicator');
+                qualityIndicator.style.display = 'block';
+
+                if (videoEl.videoHeight >= 1080) {
+                    qualityIndicator.classList.add('quality-hd');
+                    qualityIndicator.innerHTML = `<strong>HD</strong> ${resolution}`;
+                } else {
+                    qualityIndicator.textContent = resolution;
+                }
+
+                document.getElementById('streamStats').style.display = 'block';
+            });
+
+            // Обновление статистики
+            setInterval(() => {
+                if (player && player.tech_) {
+                    const tech = player.tech({ IWillNotUseThisInPlugins: true });
+
+                    // Битрейт
+                    if (tech.vhs && tech.vhs.playlists && tech.vhs.playlists.media()) {
+                        const bandwidth = tech.vhs.bandwidth || 0;
+                        document.getElementById('statBitrate').textContent =
+                            (bandwidth / 1000000).toFixed(2) + ' Mbps';
+                    }
+
+                    // Буфер
+                    const buffered = player.buffered();
+                    if (buffered.length > 0) {
+                        const bufferEnd = buffered.end(buffered.length - 1);
+                        const currentTime = player.currentTime();
+                        const bufferLength = bufferEnd - currentTime;
+                        document.getElementById('statBuffer').textContent =
+                            bufferLength.toFixed(1) + ' сек';
+                    }
+
+                    // Задержка (приблизительная)
+                    if (player.liveTracker && player.liveTracker.liveCurrentTime) {
+                        const latency = player.liveTracker.liveCurrentTime() - player.currentTime();
+                        document.getElementById('statLatency').textContent =
+                            latency.toFixed(1) + ' сек';
+                    }
+                }
+
+                // Время в эфире
+                if (streamStartTime) {
+                    const uptime = Math.floor((Date.now() - streamStartTime) / 1000);
+                    const hours = Math.floor(uptime / 3600);
+                    const minutes = Math.floor((uptime % 3600) / 60);
+                    const seconds = uptime % 60;
+                    document.getElementById('statUptime').textContent =
+                        `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                }
+            }, 1000);
 
             // Загружаем информацию о трансляции
             fetch(`/api/key/${streamKey}`)
@@ -93,6 +386,7 @@
                         document.getElementById('statusText').textContent = 'Трансляция активна';
 
                         if (data.startedAt) {
+                            streamStartTime = new Date(data.startedAt).getTime();
                             document.getElementById('streamStarted').style.display = 'block';
                             document.getElementById('streamStartedTime').textContent = new Date(data.startedAt).toLocaleString('ru-RU');
                         }
@@ -102,11 +396,19 @@
                             src: hlsUrl,
                             type: 'application/x-mpegURL'
                         });
+
+                        // Автоматически размутить после начала воспроизведения
+                        player.one('playing', () => {
+                            setTimeout(() => {
+                                player.muted(false);
+                                muteBtn.textContent = '🔊 Выключить звук';
+                            }, 500);
+                        });
                     } else {
                         document.getElementById('streamLiveStatus').innerHTML = '<span class="status-offline">⚫ Не в сети</span>';
                         document.querySelector('.status-indicator').classList.add('offline');
                         document.getElementById('statusText').textContent = 'Трансляция не активна';
-                        document.querySelector('.video-container').innerHTML = `
+                        document.querySelector('.video-wrapper').innerHTML = `
                             <div class="offline-placeholder">
                                 <h2>📴 Трансляция не активна</h2>
                                 <p>Стример сейчас оффлайн</p>
@@ -137,6 +439,26 @@
                         }
                     });
             }, 5000);
+
+            // Горячие клавиши
+            document.addEventListener('keydown', (e) => {
+                if (e.target.tagName === 'INPUT') return;
+
+                switch(e.key.toLowerCase()) {
+                    case 'f':
+                        e.preventDefault();
+                        fullscreenBtn.click();
+                        break;
+                    case 'm':
+                        e.preventDefault();
+                        muteBtn.click();
+                        break;
+                    case 't':
+                        e.preventDefault();
+                        theaterBtn.click();
+                        break;
+                }
+            });
         }
     </script>
 </body>

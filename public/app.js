@@ -51,11 +51,12 @@ async function generateKey() {
 }
 
 // Switch between SRT and RTMP protocols
-function switchProtocol(protocol) {
+function switchProtocol(protocol, evt) {
     // Update tab styles
     const tabs = document.querySelectorAll('.protocol-tab');
     tabs.forEach(tab => tab.classList.remove('active'));
-    event.target.classList.add('active');
+    const target = (evt || window.event)?.target;
+    if (target) target.classList.add('active');
 
     // Show/hide protocol sections
     if (protocol === 'srt') {
@@ -220,7 +221,12 @@ function escapeHtml(text) {
 
 function formatDate(dateString) {
     if (!dateString) return 'N/A';
-    const date = new Date(dateString);
+    // SQLite CURRENT_TIMESTAMP is "YYYY-MM-DD HH:MM:SS" in UTC — normalise to ISO.
+    const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dateString)
+        ? dateString.replace(' ', 'T') + 'Z'
+        : dateString;
+    const date = new Date(iso);
+    if (isNaN(date.getTime())) return 'N/A';
     return date.toLocaleString('ru-RU', {
         year: 'numeric',
         month: '2-digit',

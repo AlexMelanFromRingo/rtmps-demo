@@ -2,8 +2,15 @@
 node_modules/
 npm-debug.log
 yarn-error.log
-package-lock.json
 yarn.lock
+
+# SQLite database (runtime state)
+streaming.db
+streaming.db-shm
+streaming.db-wal
+*.db
+*.db-shm
+*.db-wal
 
 # Media files
 media/

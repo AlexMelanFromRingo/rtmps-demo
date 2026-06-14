@@ -89,12 +89,16 @@ http://localhost:3000
 ### Архитектура
 
 ```
-OBS Studio → RTMP Server (port 1935) → FFmpeg → HLS → Web Browser
-                    ↓
-            Express Server (port 3000)
-                    ↓
-            Web Interface + API
+OBS (RTMP, H.264)  → node-media-server (1935) ┐
+OBS (SRT, любой кодек) → ffmpeg listener (9000+) ┤→ ffmpeg → ABR HLS (1080p/720p/480p)
+                                                  │         master.m3u8 + варианты
+                                                  ↓
+                              Express (3000): дашборд + API + раздача /media (HLS)
 ```
+
+FFmpeg перекодирует вход в адаптивную лестницу H.264 (1080p/720p/480p) и пишет
+`master.m3u8` со ссылками на варианты. Плеер берёт HLS с того же origin (3000),
+поэтому CORS не нужен. На GPU NVIDIA автоматически используется NVENC.
 
 ### Используемые технологии
 
@@ -111,9 +115,12 @@ OBS Studio → RTMP Server (port 1935) → FFmpeg → HLS → Web Browser
 
 ### Порты
 
-- **3000** - Веб-интерфейс (HTTP)
-- **1935** - RTMP сервер
-- **8000** - Media сервер (HLS сегменты)
+- **3000** - Веб-интерфейс, API и раздача HLS (`/media`)
+- **1935** - RTMP сервер (ingest)
+- **8000** - node-media-server HTTP/FLV (резервный origin)
+- **9000+** - SRT-листенеры (по одному порту на ключ)
+
+Все порты, хост и пути настраиваются через переменные окружения — см. «Конфигурация».
 
 ## 📖 API Endpoints
 
@@ -131,10 +138,14 @@ OBS Studio → RTMP Server (port 1935) → FFmpeg → HLS → Web Browser
 ```json
 {
   "streamKey": "uuid",
+  "name": "My Stream",
   "rtmpUrl": "rtmp://localhost:1935/live",
-  "fullUrl": "rtmp://localhost:1935/live/uuid",
-  "hlsUrl": "http://localhost:8000/live/uuid/index.m3u8",
-  "webPlayerUrl": "http://localhost:3000/watch.html?key=uuid"
+  "rtmpStreamKey": "uuid",
+  "srtUrl": "srt://localhost:9000?mode=caller",
+  "srtPort": 9000,
+  "hlsUrl": "http://localhost:3000/media/live/uuid/master.m3u8",
+  "webPlayerUrl": "http://localhost:3000/watch.html?key=uuid",
+  "protocols": { "rtmp": { "...": "..." }, "srt": { "...": "..." } }
 }
 ```
 
@@ -169,15 +180,53 @@ npm run dev
 ### Структура проекта
 ```
 rtmps-demo/
-├── server.js           # Основной сервер (RTMP + Express)
-├── package.json        # Зависимости
-├── public/             # Статические файлы
-│   ├── index.html     # Главная страница
-│   ├── watch.html     # Страница просмотра
-│   ├── style.css      # Стили
-│   └── app.js         # Frontend JavaScript
-└── media/             # HLS сегменты (генерируются автоматически)
+├── server.js           # RTMP/SRT/HTTP сервер, API, жизненный цикл ffmpeg
+├── config.js           # Конфигурация из переменных окружения
+├── lib/
+│   └── encoding.js     # Детект энкодера + генерация ffmpeg-аргументов ABR HLS
+├── test/
+│   ├── encoding.test.js # Юнит-тесты генератора аргументов
+│   └── server.test.js   # E2E: API + реальный RTMP/SRT → HLS
+├── package.json        # Зависимости и npm-скрипты
+├── public/             # Статические файлы (дашборд + плеер)
+│   ├── index.html
+│   ├── watch.html
+│   ├── style.css
+│   └── app.js
+└── media/              # HLS-выход (генерируется автоматически)
 ```
+
+## ⚙️ Конфигурация
+
+Все настройки задаются через переменные окружения (значения по умолчанию — для
+локального запуска):
+
+| Переменная        | По умолчанию | Назначение                                  |
+|-------------------|--------------|---------------------------------------------|
+| `PUBLIC_HOST`     | `localhost`  | Хост в генерируемых URL (LAN/публичный IP)  |
+| `WEB_PORT`        | `3000`       | Дашборд, API, раздача HLS                   |
+| `RTMP_PORT`       | `1935`       | RTMP ingest                                 |
+| `MEDIA_HTTP_PORT` | `8000`       | node-media-server HTTP/FLV                   |
+| `SRT_BASE_PORT`   | `9000`       | Первый порт для SRT-листенеров              |
+| `DB_PATH`         | `./streaming.db` | Путь к базе SQLite                       |
+| `MEDIA_ROOT`      | `./media`    | Каталог HLS-выхода                          |
+| `FFMPEG_PATH`     | `ffmpeg`     | Путь к бинарю ffmpeg                         |
+
+Пример (стриминг по локальной сети):
+```bash
+PUBLIC_HOST=192.168.1.50 npm start
+```
+
+## 🧪 Тесты
+
+```bash
+npm test          # всё (юнит + e2e)
+npm run test:unit # только быстрые юнит-тесты
+npm run test:e2e  # e2e: поднимает сервер и реально гонит RTMP/SRT → HLS
+```
+
+E2E-тестам нужен установленный `ffmpeg` (используется и как тестовый источник).
+Они работают на изолированных портах и временной БД и ничего не оставляют после себя.
 
 ## 🐛 Устранение неполадок
 

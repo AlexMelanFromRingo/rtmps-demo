@@ -256,8 +256,8 @@
                 }
             });
 
-            // URL HLS потока
-            const hlsUrl = `http://localhost:8000/live/${streamKey}/index.m3u8`;
+            // URL HLS потока (мастер-плейлист ABR, тот же origin — без CORS)
+            const hlsUrl = `/media/live/${streamKey}/master.m3u8`;
 
             // Кнопки управления
             const theaterBtn = document.getElementById('theaterBtn');
@@ -378,17 +378,20 @@
                 .then(r => r.json())
                 .then(data => {
                     document.getElementById('streamName').textContent = data.name;
-                    document.getElementById('streamCreated').textContent = new Date(data.createdAt).toLocaleString('ru-RU');
+                    document.getElementById('streamCreated').textContent = data.created_at
+                        ? new Date(data.created_at.replace(' ', 'T') + 'Z').toLocaleString('ru-RU')
+                        : 'N/A';
 
-                    if (data.isLive) {
+                    if (data.is_live) {
                         document.getElementById('streamLiveStatus').innerHTML = '<span class="status-live">🔴 В эфире</span>';
                         document.querySelector('.status-indicator').classList.add('live');
                         document.getElementById('statusText').textContent = 'Трансляция активна';
 
-                        if (data.startedAt) {
-                            streamStartTime = new Date(data.startedAt).getTime();
+                        if (data.started_at) {
+                            streamStartTime = new Date(data.started_at.replace(' ', 'T') + 'Z').getTime();
                             document.getElementById('streamStarted').style.display = 'block';
-                            document.getElementById('streamStartedTime').textContent = new Date(data.startedAt).toLocaleString('ru-RU');
+                            document.getElementById('streamStartedTime').textContent =
+                                new Date(data.started_at.replace(' ', 'T') + 'Z').toLocaleString('ru-RU');
                         }
 
                         // Загружаем поток
@@ -424,11 +427,20 @@
                 });
 
             // Проверяем статус каждые 5 секунд
+            let lastKnownLive = null;
             setInterval(() => {
                 fetch(`/api/key/${streamKey}`)
                     .then(r => r.json())
                     .then(data => {
-                        if (data.isLive) {
+                        // Переход оффлайн -> лайв: перезагружаем страницу, чтобы
+                        // переинициализировать плеер (заглушка заменила video-wrapper).
+                        if (data.is_live && lastKnownLive === false) {
+                            location.reload();
+                            return;
+                        }
+                        lastKnownLive = !!data.is_live;
+
+                        if (data.is_live) {
                             document.querySelector('.status-indicator').classList.remove('offline');
                             document.querySelector('.status-indicator').classList.add('live');
                             document.getElementById('statusText').textContent = 'Трансляция активна';
@@ -437,7 +449,8 @@
                             document.querySelector('.status-indicator').classList.add('offline');
                             document.getElementById('statusText').textContent = 'Трансляция не активна';
                         }
-                    });
+                    })
+                    .catch(() => {});
             }, 5000);
 
             // Горячие клавиши

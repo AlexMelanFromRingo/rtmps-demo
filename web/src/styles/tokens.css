@@ -1,0 +1,92 @@
+/* Self-hosted fonts (no network at runtime). Both families include Cyrillic. */
+@import '@fontsource-variable/unbounded/wght.css';
+@import '@fontsource-variable/golos-text/wght.css';
+
+/*
+  StreamHub design tokens.
+  Principle: colour means signal state. Chrome is monochrome petrol + fog;
+  red = on air (tally), amber = standby (starting / reconnecting), green = healthy link.
+*/
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --night: #0b161c; /* page */
+  --deck: #10202a; /* panels */
+  --console: #172b36; /* raised controls, hover */
+  --well: #000; /* video wells are true black */
+
+  /* Lines */
+  --rule: #24404d; /* hairlines, dividers */
+  --edge: #557887; /* form field borders (≥ 3:1 on night) */
+
+  /* Text */
+  --fog: #e4eef1;
+  --haze: #97adb7;
+  --dim: #6f8793;
+
+  /* Signal states */
+  --tally: #ff4438; /* tally light: on air */
+  --tally-fill: #d92619; /* filled badge behind white text */
+  --tally-ink: #ff6a5e; /* red text on dark */
+  --tally-glow: rgb(255 68 56 / 0.35);
+  --standby: #ffb224;
+  --standby-glow: rgb(255 178 36 / 0.28);
+  --ok: #4fd69c;
+  --danger: #ff6a5e;
+
+  --focus: #e4eef1;
+
+  /* Type */
+  --font-display: 'Unbounded Variable', 'Unbounded', 'Arial Black', system-ui, sans-serif;
+  --font-text: 'Golos Text Variable', 'Golos Text', system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+
+  --fs-12: 0.75rem;
+  --fs-13: 0.8125rem;
+  --fs-14: 0.875rem;
+  --fs-16: 1rem;
+  --fs-18: 1.125rem;
+  --fs-21: 1.3125rem;
+  --fs-24: 1.5rem;
+  --fs-30: 1.875rem;
+  --fs-36: 2.25rem;
+  --fs-48: 3rem;
+
+  /* Space (4px grid) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+
+  /* Radii follow hierarchy: monitors are nearly square, controls softer, panels softest. */
+  --r-well: 3px;
+  --r-chip: 4px;
+  --r-control: 8px;
+  --r-panel: 12px;
+
+  --gutter: 16px;
+  --page-max: 1440px;
+  --header-h: 60px;
+
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --t-fast: 120ms;
+  --t-med: 220ms;
+}
+
+@media (min-width: 720px) {
+  :root {
+    --gutter: 24px;
+    --header-h: 64px;
+  }
+}
+
+@media (min-width: 1200px) {
+  :root {
+    --gutter: 32px;
+  }
+}

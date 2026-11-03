@@ -1,32 +1,7 @@
-# Node
 node_modules/
-npm-debug.log
-yarn-error.log
-yarn.lock
-
-# SQLite database (runtime state)
-streaming.db
-streaming.db-shm
-streaming.db-wal
-*.db
-*.db-shm
-*.db-wal
-
-# Media files
-media/
-*.mp4
-*.flv
-*.m3u8
-*.ts
-
-# Environment
+dist/
+*.log
 .env
 .env.local
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Logs
-logs/
-*.log

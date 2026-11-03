@@ -1,0 +1,428 @@
+/* ---------- Monogram ---------- */
+.monogram {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: 50%;
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1;
+  color: var(--fog);
+}
+
+/* ---------- Stream tile (multiviewer monitor + under-monitor label) ---------- */
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tile__screen {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--deck);
+  border-radius: var(--r-well);
+  overflow: hidden;
+  transition: box-shadow var(--t-fast) var(--ease-out);
+}
+
+/* Tally strip along the top edge of the monitor. */
+.tile__screen::before {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  inset: 0 0 auto;
+  height: 3px;
+  background: transparent;
+}
+
+.tile[data-state='live'] .tile__screen::before {
+  background: var(--tally);
+}
+
+.tile[data-state='reconnecting'] .tile__screen::before,
+.tile[data-state='starting'] .tile__screen::before {
+  background: var(--standby);
+}
+
+.tile:hover .tile__screen {
+  box-shadow: 0 0 0 2px var(--edge);
+}
+
+.tile:focus-within .tile__screen {
+  box-shadow: 0 0 0 2px var(--night), 0 0 0 4px var(--focus);
+}
+
+.tile__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tile__noimg {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--dim);
+  background:
+    radial-gradient(circle at 50% 40%, rgb(85 120 135 / 0.16), transparent 60%),
+    var(--deck);
+}
+
+.tile__noimg svg {
+  width: 36px;
+  height: 36px;
+}
+
+.tile__top {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  left: 8px;
+}
+
+.tile__bottom {
+  position: absolute;
+  z-index: 1;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.tile__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: var(--r-chip);
+  background: rgb(0 0 0 / 0.72);
+  color: #fff;
+  font-size: var(--fs-13);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.tile__pill svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tile__umd {
+  display: flex;
+  gap: var(--s-3);
+  padding: var(--s-3) 2px 0;
+  min-width: 0;
+}
+
+.tile__meta {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+
+.tile__title {
+  font-size: var(--fs-16);
+  font-weight: 600;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-wrap: pretty;
+}
+
+.tile__link {
+  color: var(--fog);
+  text-decoration: none;
+}
+
+/* Whole tile is clickable; the title stays the accessible name. */
+.tile__link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+}
+
+.tile__link:focus-visible {
+  outline: none;
+  text-decoration: underline;
+}
+
+.tile:hover .tile__link {
+  text-decoration: underline;
+  text-decoration-color: var(--edge);
+}
+
+.tile__channel {
+  font-size: var(--fs-14);
+  color: var(--haze);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile__category {
+  font-size: var(--fs-13);
+  color: var(--haze);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile__tech {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: var(--s-2) 2px 0 calc(36px + var(--s-3) + 2px);
+}
+
+.tile--featured .tile__tech {
+  padding-left: calc(44px + var(--s-3) + 2px);
+}
+
+/* ---------- Copy field ---------- */
+.copyfield {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.copyfield__row {
+  display: flex;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.copyfield__input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-14);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 520px) {
+  .copyfield__copy {
+    width: 44px;
+    padding: 0;
+  }
+
+  .copyfield__copy-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* ---------- Rendition ladder ---------- */
+.ladder {
+  display: grid;
+  gap: 2px;
+}
+
+.ladder__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) 64px minmax(60px, 1fr) 92px;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.ladder__row:first-child {
+  border-top: 0;
+}
+
+.ladder__name {
+  display: grid;
+  min-width: 0;
+}
+
+.ladder__label {
+  font-size: var(--fs-14);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ladder__spec {
+  font-size: var(--fs-12);
+  color: var(--haze);
+}
+
+.ladder__bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--console);
+  overflow: hidden;
+}
+
+.ladder__bar span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--haze);
+}
+
+.ladder__row[data-source='true'] .ladder__bar span {
+  background: var(--fog);
+}
+
+.ladder__codec {
+  justify-self: start;
+}
+
+.ladder__rate {
+  font-size: var(--fs-13);
+  color: var(--haze);
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .ladder__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 6px;
+  }
+
+  .ladder__bar {
+    grid-column: 1;
+  }
+
+  .ladder__codec {
+  justify-self: start;
+}
+
+.ladder__rate {
+    grid-column: 2;
+  }
+}
+
+/* ---------- Tabs ---------- */
+.tabs__list {
+  display: flex;
+  gap: var(--s-1);
+  border-bottom: 1px solid var(--rule);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs__tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 44px;
+  padding: 0 var(--s-4);
+  border: 0;
+  background: transparent;
+  color: var(--haze);
+  font-size: var(--fs-14);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tabs__tab:hover {
+  color: var(--fog);
+}
+
+.tabs__tab[aria-selected='true'] {
+  color: var(--fog);
+}
+
+.tabs__tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  left: var(--s-2);
+  right: var(--s-2);
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--fog);
+}
+
+.tabs__tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.tabs__panel {
+  padding-top: var(--s-5);
+}
+
+/* ---------- Choice cards (radio group) ---------- */
+.choices {
+  display: grid;
+  gap: var(--s-2);
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.choices legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+.choice {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--s-3);
+  padding: var(--s-3) var(--s-4) var(--s-3) var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  background: var(--night);
+  cursor: pointer;
+}
+
+.choice:hover {
+  border-color: var(--edge);
+}
+
+.choice:has(input:checked) {
+  border-color: var(--fog);
+}
+
+.choice:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.choice input {
+  grid-row: 1 / span 2;
+  margin: 3px 0 0;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--fog);
+}
+
+.choice input:focus-visible {
+  outline: none;
+}
+
+.choice__title {
+  font-size: var(--fs-14);
+  font-weight: 600;
+}
+
+.choice__text {
+  font-size: var(--fs-13);
+  color: var(--haze);
+}

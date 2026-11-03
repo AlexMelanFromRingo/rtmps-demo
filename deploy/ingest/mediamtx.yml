@@ -1,0 +1,64 @@
+# MediaMTX ingest node configuration for StreamHub.
+# Any key can be overridden with MTX_<KEY> environment variables.
+logLevel: info
+logDestinations: [stdout]
+readTimeout: 10s
+writeTimeout: 10s
+writeQueueSize: 1024
+
+# ── Auth: delegated to the control plane (stream keys live in Postgres) ──
+authMethod: http
+authHTTPAddress: http://api:3000/internal/mediamtx/auth  # overridden by entrypoint
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+# Control API + Prometheus metrics: internal network only (never publish these ports).
+api: yes
+apiAddress: :9997
+metrics: yes
+metricsAddress: :9998
+pprof: no
+playback: no
+
+# RTSP: used by transcoders to pull streams (TCP only — works through Docker NAT).
+rtsp: yes
+rtspTransports: [tcp]
+rtspAddress: :8554
+
+# RTMP (OBS default). Enhanced RTMP brings H.265 / AV1 / VP9.
+# For RTMPS set rtmpEncryption: "optional" and mount rtmpServerKey/Cert (port 1936).
+rtmp: yes
+rtmpAddress: :1935
+rtmpEncryption: "no"
+
+# SRT: streamid=publish:live/<key>
+srt: yes
+srtAddress: :8890
+
+# WebRTC / WHIP ingest (browsers, OBS ≥ 30). Set MTX_WEBRTCADDITIONALHOSTS to the
+# public IP/hostname of this node so remote publishers get a reachable ICE candidate.
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigins: ['*']
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: yes
+
+# Viewers never connect to ingest nodes — they use the HLS CDN/edge.
+hls: no
+moq: no
+
+pathDefaults:
+  source: publisher
+  # A reconnecting encoder replaces its own stale session immediately.
+  overridePublisher: yes
+  # Readers are transcoders only (+ overlap during failover).
+  maxReaders: 8
+  runOnOnline: /usr/local/bin/notify.sh online
+  runOnOffline: /usr/local/bin/notify.sh offline
+
+paths:
+  # Only valid stream-key paths exist; everything else is rejected.
+  "~^live/live_[A-Za-z0-9]{32}$": {}

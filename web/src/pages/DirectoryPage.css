@@ -1,0 +1,181 @@
+.directory__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-5);
+  margin-bottom: var(--s-5);
+}
+
+.directory__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-4);
+  color: var(--haze);
+  font-size: var(--fs-14);
+}
+
+.directory__stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.directory__stat .num {
+  color: var(--fog);
+  font-weight: 600;
+}
+
+.directory__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tally);
+}
+
+.directory__stale {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0 0 var(--s-4);
+  max-width: none;
+  font-size: var(--fs-13);
+  color: var(--standby);
+}
+
+.directory__stale svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* Multiview grid. Columns are explicit so the featured tile can span predictably. */
+.directory__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-6) var(--s-4);
+}
+
+.directory__grid > li {
+  display: flex;
+  min-width: 0;
+}
+
+.directory__grid > li > * {
+  flex: 1;
+}
+
+@media (min-width: 540px) {
+  .directory__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .directory__grid--featured > li:first-child {
+    grid-column: span 2;
+  }
+}
+
+@media (min-width: 900px) {
+  .directory__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--s-6) var(--s-5);
+  }
+
+  .directory__grid--featured > li:first-child {
+    grid-row: span 2;
+  }
+
+  /* The featured monitor absorbs the extra height of its two rows. */
+  .tile--featured .tile__screen {
+    flex: 1 1 auto;
+  }
+
+  .tile--featured .tile__title {
+    font-size: var(--fs-21);
+    line-height: 1.25;
+  }
+}
+
+@media (min-width: 1280px) {
+  .directory__grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* ----- Loading skeleton ----- */
+.tile-skeleton {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.tile-skeleton__screen {
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-well);
+  margin-bottom: var(--s-2);
+}
+
+.tile-skeleton__line {
+  height: 14px;
+  width: 80%;
+}
+
+.tile-skeleton__line--short {
+  width: 45%;
+}
+
+/* ----- Empty state ----- */
+.directory__empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--s-4);
+  padding: var(--s-7) 0;
+  text-align: center;
+}
+
+.directory__empty p {
+  max-width: 46ch;
+}
+
+.directory__empty-title {
+  font-family: var(--font-display);
+  font-size: var(--fs-21);
+  font-weight: 600;
+}
+
+.directory__monitors {
+  display: flex;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+
+.directory__monitors span {
+  position: relative;
+  width: 112px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-well);
+  background: var(--deck);
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+.directory__monitors span::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  border-radius: var(--r-well) var(--r-well) 0 0;
+  background: var(--rule);
+}
+
+.directory__monitors span:nth-child(2) {
+  width: 148px;
+}
+
+.directory__monitors span:nth-child(2)::before {
+  background: var(--tally);
+}
+
+@media (max-width: 480px) {
+  .directory__monitors span:not(:nth-child(2)) {
+    display: none;
+  }
+}

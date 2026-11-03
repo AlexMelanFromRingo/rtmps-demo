@@ -1,0 +1,145 @@
+# StreamHub — open-source mini-Twitch. `docker compose up -d --build` → http://localhost:8080
+#
+#   OBS/browser ──RTMP/SRT/WHIP──▶ ingest (MediaMTX) ──RTSP──▶ worker × N (FFmpeg ABR)
+#                                      │ auth/hooks                 │ fMP4 HLS
+#                                      ▼                            ▼
+#   viewers ◀── edge (nginx cache) ◀── api × N (Fastify) ◀──▶ postgres   seaweedfs (S3)
+#                                      └──── valkey (presence, pub/sub, rate limits)
+name: streamhub
+
+x-server-env: &server-env
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgres://streamhub:${POSTGRES_PASSWORD:-streamhub}@postgres:5432/streamhub
+  REDIS_URL: redis://valkey:6379
+  INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
+  S3_ENDPOINT: http://seaweedfs:8333
+  S3_BUCKET: hls
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-streamhub}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-streamhub-secret}
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: streamhub
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-streamhub}
+      POSTGRES_DB: streamhub
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U streamhub -d streamhub"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:9.1-alpine
+    # Only ephemeral state lives here (presence, counters, pub/sub): no persistence.
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.52
+    command: ["mini", "-dir=/data"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-streamhub}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-streamhub-secret}
+      S3_BUCKET: hls
+    volumes:
+      - seaweed:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    build: { context: ./server, target: api }
+    image: streamhub/server-api:latest
+    command: ["node", "src/migrate.ts"]
+    environment: *server-env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    build: { context: ./server, target: api }
+    image: streamhub/server-api:latest
+    environment:
+      <<: *server-env
+      MIGRATE_ON_START: "false"
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      PUBLIC_RTMP_URL: ${PUBLIC_RTMP_URL:-rtmp://localhost:1935/live}
+      PUBLIC_SRT_URL: ${PUBLIC_SRT_URL:-srt://localhost:8890}
+      PUBLIC_WHIP_URL: ${PUBLIC_WHIP_URL:-http://localhost:8889}
+      PUBLIC_HLS_BASE: ${PUBLIC_HLS_BASE:-/hls}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      valkey: { condition: service_healthy }
+      seaweedfs: { condition: service_healthy }
+    deploy:
+      replicas: ${API_REPLICAS:-2}
+    restart: unless-stopped
+
+  worker:
+    build: { context: ./server, target: worker }
+    image: streamhub/server-worker:latest
+    environment:
+      <<: *server-env
+      WORKER_SLOTS: ${WORKER_SLOTS:-2}
+      ENCODER: ${ENCODER:-auto}
+      X264_PRESET: ${X264_PRESET:-veryfast}
+      LADDER: ${LADDER:-1080,720,480,360,160}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      seaweedfs: { condition: service_healthy }
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+    # Time for running transcodes to be handed back to other workers.
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  ingest:
+    build: ./deploy/ingest
+    image: streamhub/ingest:latest
+    hostname: ingest-1
+    environment:
+      CONTROL_URL: http://api:3000
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
+      NODE_ID: ingest-1
+      NODE_API_URL: http://ingest:9997
+      NODE_RTSP_URL: rtsp://ingest:8554
+      NODE_SRT_URL: srt://ingest:8890
+      # Public IP/host of this machine for WebRTC (WHIP) ICE candidates.
+      MTX_WEBRTCADDITIONALHOSTS: ${WEBRTC_PUBLIC_HOSTS:-}
+    ports:
+      - "1935:1935"        # RTMP (OBS)
+      - "8890:8890/udp"    # SRT
+      - "8889:8889"        # WHIP (WebRTC signalling)
+      - "8189:8189/udp"    # WebRTC media
+      - "8189:8189/tcp"    # WebRTC media (TCP fallback)
+    depends_on:
+      api: { condition: service_started }
+    restart: unless-stopped
+
+  edge:
+    build: { context: ., dockerfile: deploy/edge/Dockerfile }
+    image: streamhub/edge:latest
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+    depends_on:
+      api: { condition: service_started }
+      seaweedfs: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  seaweed:

@@ -7,7 +7,7 @@ RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
-FROM nginx:1.30-alpine
+FROM nginx:1.31-alpine
 ENV DNS_RESOLVER=127.0.0.11 \
     API_HOST=api API_PORT=3000 \
     S3_HOST=seaweedfs S3_PORT=8333 S3_BUCKET=hls \

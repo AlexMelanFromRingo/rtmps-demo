@@ -3,7 +3,7 @@
 # FROM scratch, so we add a minimal Alpine userland for curl/sh.
 FROM bluenviron/mediamtx:1.21.3 AS mediamtx
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache curl ca-certificates tini
 COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
 COPY mediamtx.yml /etc/mediamtx/mediamtx.yml

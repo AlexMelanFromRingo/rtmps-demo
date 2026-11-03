@@ -75,11 +75,15 @@ export type TranscodeMode = 'abr' | 'passthrough';
 export type ChannelPrivate = ChannelPublic & { transcodeMode: TranscodeMode };
 
 export type TranscoderStats = {
-  state: 'pending' | 'running';
+  state: 'pending' | 'running' | 'failed';
   worker: string | null;
   encoder: string | null;
   fps: number | null;
   speed: number | null;
+  /** No free full-transcoding capacity: source only (+ H.264 ≤480p). */
+  degraded?: boolean;
+  /** Why the transcode is not running (shown to the streamer). */
+  error?: string | null;
 };
 
 export type LiveStats = {
@@ -93,6 +97,8 @@ export type DashboardLive = LiveInfo & { stats: LiveStats };
 export type IngestInfo = {
   rtmp: { server: string; streamKey: string; codecs: string[] };
   srt: { url: string; codecs: string[] };
+  /** Universal SRT gateway: any container FFmpeg reads (AV1 in Matroska/WebM…). */
+  srtAny?: { url: string; codecs: string[]; containers: string[] };
   whip: { url: string; codecs: string[] };
 };
 

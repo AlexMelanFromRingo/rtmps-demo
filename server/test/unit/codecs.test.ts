@@ -46,3 +46,13 @@ test('h264LevelFor picks a level that fits the rendition', () => {
   assert.equal(h264LevelFor(1280, 720, 30), 31);
   assert.equal(h264LevelFor(640, 360, 30), 30);
 });
+
+test('protocol detection honours the SRT gateway tag', async () => {
+  const { protocolFromSourceType } = await import('../../src/control/paths.ts');
+  assert.equal(protocolFromSourceType('rtspSession', 'via=srt'), 'srt');
+  assert.equal(protocolFromSourceType('rtspSession', 'via%3Dsrt'), 'srt', 'MTX_QUERY is URL-escaped');
+  assert.equal(protocolFromSourceType('rtspSession', '%E0%A4%A'), 'rtsp', 'malformed escape does not throw');
+  assert.equal(protocolFromSourceType('rtspSession', ''), 'rtsp');
+  assert.equal(protocolFromSourceType('rtmpConn'), 'rtmp');
+  assert.equal(protocolFromSourceType('webRTCSession', 'foo=bar'), 'webrtc');
+});

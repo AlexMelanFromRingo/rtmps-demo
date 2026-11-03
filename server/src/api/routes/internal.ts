@@ -22,6 +22,7 @@ const heartbeatBody = z.object({
 });
 const streamBody = z.object({
   node: nodeId, path: z.string().max(200), sourceType: z.string().max(40).optional(), sourceId: z.string().min(1).max(100),
+  query: z.string().max(500).optional(),
 });
 
 export async function internalRoutes(app: FastifyInstance): Promise<void> {

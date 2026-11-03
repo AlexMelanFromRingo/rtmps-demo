@@ -45,8 +45,9 @@ export function codecsFromTracks(tracks: MtxPath['tracks2']) {
   return {
     videoCodec: video?.codec ?? null,
     audioCodec: audio ? (TRACK_NAMES[audio.codec] ?? audio.codec) : null,
-    width: video?.codecProps?.width ?? null,
-    height: video?.codecProps?.height ?? null,
+    // MediaMTX reports 0 before it has parsed the first SPS: unknown, not zero.
+    width: video?.codecProps?.width || null,
+    height: video?.codecProps?.height || null,
   };
 }
 

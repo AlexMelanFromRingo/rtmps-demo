@@ -100,7 +100,11 @@ export async function directory(): Promise<{ channel: ChannelPublic; live: LiveI
   const rows = await query<BroadcastRow & { slug: string; display_name: string; title: string; category: string }>(`
     SELECT ${BROADCAST_COLS}, c.slug::text, u.display_name, c.title, c.category
       FROM broadcasts b JOIN channels c ON c.id = b.channel_id JOIN users u ON u.id = c.owner_id
-     WHERE b.status <> 'ended' ORDER BY b.started_at DESC LIMIT 500`);
+     WHERE b.status <> 'ended'
+       -- A stream that never produced video (unsupported codec, broken encoder)
+       -- is shown to its owner in the studio, not to viewers in the directory.
+       AND (b.ready_at IS NOT NULL OR b.started_at > now() - interval '60 seconds')
+     ORDER BY b.started_at DESC LIMIT 500`);
   const counts = await viewerCounts(rows.map((r) => r.id));
   return rows
     .map((r) => ({

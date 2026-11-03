@@ -80,6 +80,7 @@ services:
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       PUBLIC_RTMP_URL: ${PUBLIC_RTMP_URL:-rtmp://localhost:1935/live}
       PUBLIC_SRT_URL: ${PUBLIC_SRT_URL:-srt://localhost:8890}
+      PUBLIC_SRT_ANY_URL: ${PUBLIC_SRT_ANY_URL:-srt://localhost:8891}
       PUBLIC_WHIP_URL: ${PUBLIC_WHIP_URL:-http://localhost:8889}
       PUBLIC_HLS_BASE: ${PUBLIC_HLS_BASE:-/hls}
     depends_on:
@@ -129,6 +130,23 @@ services:
       - "8189:8189/tcp"    # WebRTC media (TCP fallback)
     depends_on:
       api: { condition: service_started }
+    restart: unless-stopped
+
+  # Universal SRT input: any container/codec FFmpeg can read (AV1/VP9 in
+  # Matroska/WebM/FLV…), re-published to the ingest node without re-encoding.
+  # The ingest node's own SRT port 8890 stays the fast path for OBS (MPEG-TS H.264/HEVC).
+  srt-gateway:
+    build: ./deploy/srt-gateway
+    image: streamhub/srt-gateway:latest
+    environment:
+      CONTROL_URL: http://api:3000
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
+      INGEST_RTSP_URL: rtsp://ingest:8554
+      SRT_PASSPHRASE: ${SRT_PASSPHRASE:-}
+    ports:
+      - "8891:8891/udp"
+    depends_on:
+      ingest: { condition: service_started }
     restart: unless-stopped
 
   edge:

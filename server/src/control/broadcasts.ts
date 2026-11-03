@@ -3,27 +3,16 @@
 // (edge-triggered) and the reconciler (level-triggered).
 import type pg from 'pg';
 import { config, INGEST_READ_USER } from '../config.ts';
-import { STREAM_KEY_RE, safeEqual } from '../lib/crypto.ts';
+import { safeEqual } from '../lib/crypto.ts';
 import { one, query, tx } from '../lib/db.ts';
 import { publishChannelEvent } from '../lib/events.ts';
 import { log } from '../lib/log.ts';
 
 export const INGEST_APP = 'live';
 
-export function streamKeyFromPath(path: string): string | null {
-  const m = /^live\/([^/]+)$/.exec(path);
-  return m && STREAM_KEY_RE.test(m[1]!) ? m[1]! : null;
-}
+import { protocolFromSourceType, streamKeyFromPath } from './paths.ts';
 
-export function protocolFromSourceType(t: string | undefined | null): string {
-  switch (t) {
-    case 'rtmpConn': case 'rtmpsConn': return 'rtmp';
-    case 'srtConn': return 'srt';
-    case 'webRTCSession': return 'webrtc';
-    case 'rtspSession': case 'rtspsSession': return 'rtsp';
-    default: return 'unknown';
-  }
-}
+export { protocolFromSourceType, streamKeyFromPath };
 
 // ── MediaMTX authentication hook ────────────────────────────────────────────
 export type AuthRequest = {
@@ -67,7 +56,7 @@ export async function getNode(id: string): Promise<IngestNode | null> {
 }
 
 // ── online / offline ────────────────────────────────────────────────────────
-export type StreamEvent = { node: string; path: string; sourceType?: string | undefined; sourceId: string };
+export type StreamEvent = { node: string; path: string; sourceType?: string | undefined; sourceId: string; query?: string | undefined };
 
 type ActiveBroadcast = { id: string; status: string; source_id: string | null; ingest_node: string | null; ingest_path: string | null };
 type LockedChannel = { id: string; title: string; category: string };
@@ -96,7 +85,7 @@ export async function handleOnline(ev: StreamEvent, extra?: { videoCodec?: strin
   if (!node) throw new Error(`unknown ingest node ${ev.node}`); // hook retries after node heartbeat
   const sourceUrl = `${node.rtsp_url}/${ev.path}`;
   const sourceSrtUrl = node.srt_url;
-  const protocol = protocolFromSourceType(ev.sourceType);
+  const protocol = protocolFromSourceType(ev.sourceType, ev.query);
 
   const result = await tx(async (c) => {
     const ch = await lockChannelForPath(c, ev.path, key);

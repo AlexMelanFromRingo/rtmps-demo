@@ -246,6 +246,14 @@ describe('ingest × codec matrix (multiple channels live at once)', () => {
       expect: { video: 'H265', source: 'H265' },
     },
     {
+      // Universal SRT gateway: AV1 inside Matroska (AV1 in MPEG-TS is not standardised).
+      name: 'srtany-av1', protocol: 'srt', network: 'host',
+      args: (key: string) => [...SOURCE(1280, 720, 30), '-c:v', 'libsvtav1', '-preset', '12', '-g', '60', '-pix_fmt', 'yuv420p',
+        '-c:a', 'libopus', ...DURATION, '-f', 'matroska', `srt://${INGEST}:8891?streamid=publish:live/${key}`],
+      codecs: [/CODECS="av01\.0\.\d\dM\.08,mp4a\.40\.2".*NAME="source"/, /avc1\./], ladder: [/NAME="480p"/],
+      expect: { video: 'AV1', source: 'AV1' },
+    },
+    {
       // WHIP's ICE candidate is the container IP, so publish from inside the ingest netns.
       name: 'whip-h264', protocol: 'webrtc', network: `container:${PROJECT}-ingest-1`,
       args: (key: string) => [...SOURCE(1280, 720, 30), '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-bf', '0',
@@ -331,6 +339,22 @@ describe('ingest × codec matrix (multiple channels live at once)', () => {
     // SIGKILLed publisher sends no WHIP DELETE: MediaMTX notices via ICE timeout (~25 s).
     stopPublisher(r.container);
     await waitFor('reconnecting', async () => (await r.client.get('/api/dashboard')).json.live?.status === 'reconnecting', 50_000);
+  });
+
+  test('AV1 inside MPEG-TS on the native SRT port: a clear error for the streamer instead of a silent dead stream', async () => {
+    const s = await newStreamer('srtts');
+    const container = publish('srt-ts-av1', 'host', [...SOURCE(640, 360, 30), '-c:v', 'libsvtav1', '-preset', '12', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', ...DURATION, '-f', 'mpegts', `srt://${INGEST}:8890?streamid=publish:live/${s.key}&pkt_size=1316`]);
+    try {
+      const err = await waitFor('transcoder error in the studio', async () => {
+        const d = (await s.client.get('/api/dashboard')).json;
+        return d.live?.stats.transcoder?.error as string | undefined;
+      }, 45_000);
+      assert.match(err, /нет видео/i);
+      assert.equal(((await s.client.get('/api/dashboard')).json as Dashboard).live?.playbackUrl, null);
+    } finally {
+      stopPublisher(container);
+    }
   });
 
   test('stream key reset during a live broadcast keeps it live', async () => {

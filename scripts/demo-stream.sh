@@ -3,13 +3,13 @@
 #
 #   scripts/demo-stream.sh <stream_key> [codec] [protocol] [resolution] [fps]
 #     codec:    h264 | hevc | av1 | vp9           (default h264)
-#     protocol: rtmp | srt | whip                 (default rtmp)
+#     protocol: rtmp | srt | srtany | whip        (default rtmp; srtany = universal SRT, any codec)
 #     e.g. scripts/demo-stream.sh live_xxx av1 rtmp 1920x1080 60
 #
 # Env: INGEST_HOST (default 127.0.0.1), DURATION seconds (default 3600).
 set -euo pipefail
 
-KEY="${1:?usage: $0 <stream_key> [h264|hevc|av1|vp9] [rtmp|srt|whip] [WxH] [fps]}"
+KEY="${1:?usage: $0 <stream_key> [h264|hevc|av1|vp9] [rtmp|srt|srtany|whip] [WxH] [fps]}"
 CODEC="${2:-h264}"
 PROTO="${3:-rtmp}"
 SIZE="${4:-1280x720}"
@@ -30,6 +30,7 @@ NET=(--network host)
 case "$PROTO" in
   rtmp) A=(-c:a aac -b:a 128k); OUT=(-f flv "rtmp://$HOST:1935/live/$KEY") ;;
   srt)  A=(-c:a aac -b:a 128k); OUT=(-f mpegts "srt://$HOST:8890?streamid=publish:live/$KEY&pkt_size=1316") ;;
+  srtany) A=(-c:a libopus -b:a 128k); OUT=(-f matroska "srt://$HOST:8891?streamid=publish:live/$KEY") ;;
   whip)
     [ "$CODEC" = h264 ] || { echo "FFmpeg's WHIP muxer supports H.264 only; use the browser publisher for AV1/VP9" >&2; exit 1; }
     V=(-c:v libx264 -preset veryfast -tune zerolatency -bf 0 -b:v 3M -g "$GOP" -profile:v baseline -pix_fmt yuv420p)

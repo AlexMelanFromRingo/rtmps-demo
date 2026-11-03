@@ -121,6 +121,8 @@ data: {"live": LiveInfo | null, "channel": ChannelPublic}
   "ingest": {
     "rtmp": { "server": "rtmp://host:1935/live", "streamKey": "live_xxx", "codecs": ["H264","H265","AV1","VP9"] },
     "srt":  { "url": "srt://host:8890?streamid=publish:live/live_xxx&pkt_size=1316", "codecs": ["H264","H265"] },
+    "srtAny": { "url": "srt://host:8891?streamid=publish:live/live_xxx",
+                "codecs": ["AV1","VP9","VP8","H265","H264"], "containers": ["Matroska/WebM","FLV","MPEG-TS"] },
     "whip": { "url": "http://host:8889/live/live_xxx/whip", "codecs": ["H264","H265","AV1","VP9","VP8"] }
   },
   "live": null | {
@@ -129,12 +131,13 @@ data: {"live": LiveInfo | null, "channel": ChannelPublic}
       "ingestKbps": number | null,      // входной битрейт с ingest-узла
       "ingestNode": string | null,
       "transcoder": null | {
-        "state": "pending" | "running",
+        "state": "pending" | "running" | "failed",
         "worker": string | null,
         "encoder": string | null,       // libx264 | h264_nvenc | ...
         "fps": number | null,           // скорость кодирования, кадров/с
         "speed": number | null,         // 1.0 = реальное время
-        "degraded": boolean             // нет свободных мощностей: только исходник (+H.264 ≤480p)
+        "degraded": boolean,            // нет свободных мощностей: только исходник (+H.264 ≤480p)
+        "error": string | null          // почему транскод не идёт (напр. «нет видео» для AV1 в MPEG-TS)
       }
     }
   },

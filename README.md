@@ -28,7 +28,7 @@ docker compose up -d --build
 Откройте **http://localhost:8080**, зарегистрируйтесь и перейдите в «Студию».
 
 Сервисы: `edge` (сайт, :8080), `api` ×2, `worker` ×2, `ingest` (RTMP :1935, SRT :8890/udp,
-WHIP :8889, WebRTC :8189), `postgres`, `valkey`, `seaweedfs`.
+WHIP :8889, WebRTC :8189), `srt-gateway` (универсальный SRT :8891/udp), `postgres`, `valkey`, `seaweedfs`.
 
 ## Как стримить
 
@@ -36,8 +36,15 @@ WHIP :8889, WebRTC :8189), `postgres`, `valkey`, `seaweedfs`.
 |---|---|---|
 | **RTMP** (Enhanced RTMP) | H.264, H.265, AV1, VP9 | Настройки → Трансляция → «Настраиваемый»: сервер `rtmp://<хост>:1935/live`, ключ из Студии. HEVC/AV1 — OBS ≥ 29.1 |
 | **SRT** | H.264, H.265 | Сервер: полный URL из Студии `srt://<хост>:8890?streamid=publish:live/<ключ>&pkt_size=1316`, ключ пустой |
+| **SRT · любой кодек** | AV1, VP9, VP8, H.265, H.264 | `srt://<хост>:8891?streamid=publish:live/<ключ>`; контейнер Matroska/WebM, FLV или MPEG-TS (FFmpeg, GStreamer, железо) |
 | **WHIP** (WebRTC) | H.264, H.265, AV1, VP9, VP8 | Служба «WHIP», сервер `http://<хост>:8889/live/<ключ>/whip` (OBS ≥ 30) |
 | **Браузер** | AV1, VP9, VP8, H.264 (что поддерживает браузер) | Студия → «Эфир из браузера» |
+
+**AV1 и SRT.** OBS (вплоть до 33.x) отправляет по SRT только H.264/HEVC, поэтому AV1 из OBS идёт
+по RTMP (Enhanced RTMP) или WHIP. AV1/VP9 внутри MPEG-TS не стандартизированы: FFmpeg не может их
+прочитать. Для них есть универсальный SRT-вход (порт 8891), который принимает Matroska/WebM/FLV и
+передаёт поток дальше без перекодирования. Если кодек по выбранному протоколу прочитать нельзя,
+Студия показывает понятную ошибку, а не «эфир без видео».
 
 Рекомендации: интервал ключевых кадров 2 с, CBR. Чем ниже задержка источника, тем меньше
 итоговая (сейчас ≈ 6–10 с).
@@ -55,6 +62,8 @@ FFmpeg-примеры:
 ffmpeg -re -i in.mp4 -c:v libsvtav1 -preset 10 -g 60 -c:a aac -f flv rtmp://localhost:1935/live/<ключ>
 # SRT, HEVC
 ffmpeg -re -i in.mp4 -c:v libx265 -g 60 -c:a aac -f mpegts "srt://localhost:8890?streamid=publish:live/<ключ>&pkt_size=1316"
+# SRT (универсальный вход), AV1 + Opus в Matroska
+ffmpeg -re -i in.mp4 -c:v libsvtav1 -preset 10 -g 60 -c:a libopus -f matroska "srt://localhost:8891?streamid=publish:live/<ключ>"
 ```
 
 ## Что получает зритель
@@ -107,7 +116,7 @@ server/   Node 24 + TypeScript (запускается без сборки): API
   src/worker     очередь заданий, ladder/ffmpeg/master-плейлист, выгрузка в S3
   migrations/    SQL-миграции
 web/      Vite + React 19 + hls.js (SPA)
-deploy/   ingest (MediaMTX + хуки), edge (nginx)
+deploy/   ingest (MediaMTX + хуки), srt-gateway (Go: SRT любого кодека), edge (nginx)
 docs/     архитектура, API, эксплуатация
 ```
 
@@ -116,12 +125,13 @@ cd server && npm ci
 npm run typecheck
 npm test                  # unit-тесты (ladder, codecs, ffmpeg-аргументы, порядок выгрузки…)
 npm run test:e2e          # e2e против запущенного `docker compose up` (нужен docker)
+cd ../deploy/srt-gateway && go test ./...   # шлюз SRT
 
 cd web && npm ci && npm run dev   # фронтенд с hot reload, проксирует /api и /hls на :8080
 ```
 
-e2e-набор публикует реальные потоки FFmpeg 9 (RTMP H.264/HEVC/AV1, SRT HEVC 1080p, WHIP
-H.264+Opus) одновременно в разные каналы и проверяет:
+e2e-набор публикует реальные потоки FFmpeg 9 одновременно в разные каналы: RTMP H.264/HEVC/AV1,
+SRT HEVC 1080p, SRT-шлюз AV1+Opus в Matroska, WHIP H.264+Opus. Он проверяет:
 - master-плейлисты с правильными `CODECS`;
 - сегменты, init-файлы и превью;
 - каталог, SSE и счётчик зрителей;

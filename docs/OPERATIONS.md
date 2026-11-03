@@ -13,7 +13,8 @@
    доступны только в secure context), то есть TLS и для порта 8889.
    RTMPS: `MTX_RTMPENCRYPTION=optional` + сертификаты (`MTX_RTMPSERVERKEY/CERT`), порт 1936.
 4. **Сеть.** Наружу открыты только edge (80/443), RTMP 1935/tcp, SRT 8890/udp,
-   WHIP 8889/tcp, WebRTC 8189/udp+tcp. Порты 8554 (RTSP), 9997/9998 (API/метрики
+   универсальный SRT 8891/udp, WHIP 8889/tcp, WebRTC 8189/udp+tcp. `SRT_PASSPHRASE` включает
+   шифрование на универсальном SRT-входе. Порты 8554 (RTSP), 9997/9998 (API/метрики
    MediaMTX), 3000, 9100, Postgres, Valkey, SeaweedFS — только во внутренней сети.
 5. **Ёмкость.** `WORKER_REPLICAS × WORKER_SLOTS` ≥ пиковое число эфиров с полной лестницей
    + запас на падение одного воркера (N+1). Остальные эфиры уйдут в degraded-режим.

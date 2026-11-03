@@ -19,6 +19,12 @@ export function ingestUrls(streamKey: string) {
   return {
     rtmp: { server: config.public.rtmpUrl, streamKey, codecs: ['H264', 'H265', 'AV1', 'VP9'] },
     srt: { url: `${config.public.srtUrl}?streamid=publish:${path}&pkt_size=1316`, codecs: ['H264', 'H265'] },
+    // Any container FFmpeg can read (Matroska/WebM, FLV, MPEG-TS…), remuxed without re-encoding.
+    srtAny: {
+      url: `${config.public.srtAnyUrl}?streamid=publish:${path}`,
+      codecs: ['AV1', 'VP9', 'VP8', 'H265', 'H264'],
+      containers: ['Matroska/WebM', 'FLV', 'MPEG-TS'],
+    },
     whip: { url: `${config.public.whipUrl}/${path}/whip`, codecs: ['H264', 'H265', 'AV1', 'VP9', 'VP8'] },
   };
 }
@@ -40,8 +46,14 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
     let live = null;
     if (b) {
       const viewers = (await viewerCounts([b.id])).get(b.id) ?? 0;
-      const job = await one<{ state: 'pending' | 'running'; worker_id: string | null; stats: { fps?: number; speed?: number; encoder?: string; degraded?: boolean } | null }>(
-        `SELECT state, worker_id, stats FROM transcode_jobs WHERE broadcast_id = $1 AND state IN ('pending', 'running')`, [b.id]);
+      const job = await one<{ state: 'pending' | 'running' | 'failed'; worker_id: string | null; last_error: string | null; stats: { fps?: number; speed?: number; encoder?: string; degraded?: boolean } | null }>(
+        `SELECT state, worker_id, stats, CASE WHEN attempts > 1 OR state = 'pending' THEN last_error END AS last_error
+           FROM transcode_jobs WHERE broadcast_id = $1 AND state IN ('pending', 'running')
+          UNION ALL
+         SELECT state, worker_id, stats, last_error FROM transcode_jobs
+          WHERE broadcast_id = $1 AND state = 'failed'
+            AND NOT EXISTS (SELECT 1 FROM transcode_jobs WHERE broadcast_id = $1 AND state IN ('pending', 'running'))
+          LIMIT 1`, [b.id]);
       live = {
         ...liveInfo(b, viewers),
         stats: {
@@ -54,6 +66,8 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
             fps: job.stats?.fps ?? null,
             speed: job.stats?.speed ?? null,
             degraded: job.stats?.degraded ?? false,
+            // Why the transcode is not running (after a failed attempt), for the streamer.
+            error: job.state === 'running' && job.stats ? null : (job.last_error ?? null),
           } : null,
         },
       };

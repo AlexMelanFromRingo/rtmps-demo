@@ -6,11 +6,12 @@ import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { CopyField } from '../../components/CopyField';
 import { codecLabel } from '../../lib/format';
 
-type TabId = 'rtmp' | 'srt' | 'whip';
+type TabId = 'rtmp' | 'srt' | 'srtany' | 'whip';
 
-const TABS: { id: TabId; label: string }[] = [
+const ALL_TABS: { id: TabId; label: string }[] = [
   { id: 'rtmp', label: 'RTMP' },
   { id: 'srt', label: 'SRT' },
+  { id: 'srtany', label: 'SRT · любой кодек' },
   { id: 'whip', label: 'WHIP' },
 ];
 
@@ -30,10 +31,10 @@ function CodecList({ codecs }: { codecs: string[] }) {
   );
 }
 
-function Steps({ children }: { children: ReactNode }) {
+function Steps({ children, title = 'Настройка OBS' }: { children: ReactNode; title?: string }) {
   return (
     <div className="ingest__howto">
-      <h3 className="ingest__howto-title">Настройка OBS</h3>
+      <h3 className="ingest__howto-title">{title}</h3>
       <ol className="steps">{children}</ol>
     </div>
   );
@@ -61,7 +62,8 @@ export function IngestPanel({
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetDone, setResetDone] = useState(false);
   const baseId = useId();
-  const tabRefs = useRef<Record<TabId, HTMLButtonElement | null>>({ rtmp: null, srt: null, whip: null });
+  const tabRefs = useRef<Record<TabId, HTMLButtonElement | null>>({ rtmp: null, srt: null, srtany: null, whip: null });
+  const TABS = ALL_TABS.filter((t) => t.id !== 'srtany' || ingest.srtAny);
 
   useEffect(() => {
     if (!resetDone) return;
@@ -192,6 +194,35 @@ export function IngestPanel({
                   В поле «Сервер» вставьте SRT-адрес целиком, <b>«Ключ потока» оставьте пустым</b>.
                 </li>
                 {KEYFRAME_STEP}
+              </Steps>
+              <p className="ingest__note">
+                <Info aria-hidden="true" />
+                OBS отправляет по SRT только H.264 и HEVC. Для AV1 из OBS используйте RTMP, для AV1/VP9 из
+                FFmpeg и других программ — вкладку «SRT · любой кодек».
+              </p>
+            </div>
+          ) : tab === 'srtany' && ingest.srtAny ? (
+            <div className="ingest__body">
+              <CopyField
+                label="SRT-адрес (любой кодек)"
+                value={ingest.srtAny.url}
+                secret
+                mask={mask}
+                hint="Адрес уже содержит ключ трансляции."
+              />
+              <CodecList codecs={ingest.srtAny.codecs} />
+              <Steps title="Как отправить">
+                <li>
+                  Контейнер внутри SRT: <b>{ingest.srtAny.containers.join(', ')}</b>. Для AV1 и VP9 нужен
+                  Matroska/WebM или FLV: в MPEG-TS эти кодеки не стандартизированы.
+                </li>
+                <li>
+                  Пример для FFmpeg:{' '}
+                  <code className="ingest__code">
+                    ffmpeg -re -i video.mkv -c copy -f matroska &quot;{mask(ingest.srtAny.url)}&quot;
+                  </code>
+                </li>
+                <li>Видео и звук передаются без перекодирования, качество для зрителей строит сервер.</li>
               </Steps>
             </div>
           ) : (

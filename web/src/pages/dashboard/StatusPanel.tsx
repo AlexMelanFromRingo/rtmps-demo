@@ -160,11 +160,13 @@ function buildChain(live: DashboardLive | null, channel: ChannelPrivate): Stage[
       ? live.playbackUrl
         ? 'ok'
         : 'standby'
-      : tx.state === 'pending'
-        ? 'standby'
-        : slow
-          ? 'warn'
-          : 'ok';
+      : tx.error
+        ? 'warn'
+        : tx.state === 'pending'
+          ? 'standby'
+          : slow || tx.degraded
+            ? 'warn'
+            : 'ok';
 
   const res = src.width && src.height ? `${src.width}×${src.height}` : null;
 
@@ -200,7 +202,9 @@ function buildChain(live: DashboardLive | null, channel: ChannelPrivate): Stage[
         ? channel.transcodeMode === 'passthrough'
           ? 'не нужно'
           : '—'
-        : tx.state === 'pending'
+        : tx.error
+          ? 'ошибка'
+          : tx.state === 'pending'
           ? 'ждёт воркер'
           : tx.speed != null
             ? `${formatDecimal(tx.speed, 2)}×`
@@ -208,11 +212,13 @@ function buildChain(live: DashboardLive | null, channel: ChannelPrivate): Stage[
       details: tx
         ? [
             { k: 'Режим', v: mode },
-            { k: 'Состояние', v: tx.state === 'running' ? 'работает' : 'ожидает воркер' },
+            { k: 'Состояние', v: tx.state === 'running' ? 'работает' : tx.state === 'failed' ? 'остановлено' : 'ожидает воркер' },
             { k: 'Воркер', v: tx.worker },
             { k: 'Кодировщик', v: tx.encoder },
             { k: 'Скорость', v: tx.fps != null ? formatFps(tx.fps) : null },
             { k: 'Внимание', v: slow ? 'не успевает за реальным временем' : null },
+            { k: 'Мощности', v: tx.degraded ? 'нет свободных — только исходное качество' : null },
+            { k: 'Ошибка', v: tx.error ?? null },
           ]
         : [{ k: 'Режим', v: mode }],
     },

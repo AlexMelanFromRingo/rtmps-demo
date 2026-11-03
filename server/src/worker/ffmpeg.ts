@@ -156,6 +156,15 @@ type ProbeStream = {
   width?: number; height?: number; pix_fmt?: string; avg_frame_rate?: string; r_frame_rate?: string;
 };
 
+/** The ingest stream has no video track the server can read (e.g. AV1 inside MPEG-TS over SRT). */
+export class NoVideoError extends Error {
+  constructor() {
+    super('Во входящем потоке нет видео, которое сервер может прочитать. AV1/VP9 по SRT в MPEG-TS не стандартизированы — '
+      + 'используйте RTMP (Enhanced RTMP, OBS ≥ 29.1), WHIP или универсальный SRT-вход (Matroska/WebM/FLV).');
+    this.name = 'NoVideoError';
+  }
+}
+
 export function parseRate(rate: string | undefined): number {
   if (!rate) return 0;
   const [n, d] = rate.split('/').map(Number);
@@ -167,7 +176,7 @@ export function parseRate(rate: string | undefined): number {
 export function probeResultToSource(streams: ProbeStream[]): ProbedSource {
   const video = streams.find((s) => s.codec_type === 'video');
   const audio = streams.find((s) => s.codec_type === 'audio');
-  if (!video) throw new Error('source has no video track');
+  if (!video) throw new NoVideoError();
   const avg = parseRate(video.avg_frame_rate);
   const real = parseRate(video.r_frame_rate);
   const fps = avg > 1 && avg <= 240 ? avg : real > 1 && real <= 240 ? real : 30;

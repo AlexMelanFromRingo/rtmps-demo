@@ -66,6 +66,8 @@ export const config = {
   public: {
     rtmpUrl: str('PUBLIC_RTMP_URL', 'rtmp://localhost:1935/live'),
     srtUrl: str('PUBLIC_SRT_URL', 'srt://localhost:8890'),
+    // Universal SRT gateway (any container/codec, e.g. AV1 in Matroska).
+    srtAnyUrl: str('PUBLIC_SRT_ANY_URL', 'srt://localhost:8891'),
     whipUrl: str('PUBLIC_WHIP_URL', 'http://localhost:8889'),
     hlsBase: str('PUBLIC_HLS_BASE', '/hls'),
   },

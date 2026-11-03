@@ -414,6 +414,18 @@
   margin-top: 2px;
 }
 
+.ingest__code {
+  display: block;
+  margin-top: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-well);
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: var(--fs-13);
+  overflow-wrap: anywhere;
+  color: var(--fog);
+}
+
 /* ---------- Browser broadcast ---------- */
 .bb__grid {
   display: grid;

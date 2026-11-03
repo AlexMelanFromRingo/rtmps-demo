@@ -5,7 +5,7 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { base32Decode, hotp, stepAt } from '../../src/lib/totp.ts';
 import {
-  BASE, Client, HLS_ORIGIN, newStreamer, publish, readSse, resetRateLimits, rtmpH264, stopAllPublishers,
+  BASE, Client, HLS_ORIGIN, newStreamer, PROJECT, publish, readSse, resetRateLimits, rtmpH264, SOURCE, stopAllPublishers,
   stopPublisher, SUFFIX, waitFor,
 } from './helpers.ts';
 
@@ -178,6 +178,28 @@ describe('live features: low latency, categories/search, health, multistream, VO
     assert.equal((await viewer.del(`/api/videos/${video.id}`)).status, 401);
     assert.equal((await s.client.del(`/api/videos/${video.id}`)).status, 204);
     assert.equal((await viewer.get(`/api/videos/${video.id}`)).status, 404);
+  });
+
+  test('multitrack (OBS Enhanced Broadcasting): streamer-encoded renditions are served as-is', async () => {
+    const s = await newStreamer('mtrack');
+    // One connection, two H.264 video tracks (720p + 360p) — what OBS multitrack video sends.
+    const container = publish('mtrack', `${PROJECT}_default`, [...SOURCE(1280, 720, 30),
+      '-filter_complex', '[0:v]split=2[a][b];[b]scale=640:360[b2]', '-map', '[a]', '-map', '[b2]', '-map', '1:a',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-g', '60', '-bf', '0', '-b:v:0', '2500k', '-b:v:1', '700k', '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac', '-t', '120', '-f', 'rtsp', '-rtsp_transport', 'tcp', `rtsp://ingest:8554/live/${s.key}`]);
+    try {
+      const live = await waitFor('multitrack live', async () => {
+        const d = (await s.client.get('/api/dashboard')).json;
+        return d.live?.renditions?.length ? d.live : null;
+      }, 60_000);
+      const byName = Object.fromEntries(live.renditions.map((r: { name: string }) => [r.name, r]));
+      assert.equal(byName.source?.passthrough, true);
+      assert.equal(byName['obs-360p']?.passthrough, true, 'the 360p track from the encoder is passed through');
+      assert.equal(byName['360p'], undefined, 'the server does not re-encode what the streamer already sent');
+      assert.ok(byName['480p'] && byName['160p'], 'missing rungs are filled by the server');
+    } finally {
+      stopPublisher(container);
+    }
   });
 
   test('multistream: destinations are validated (SSRF) and pushed while live', async (t) => {

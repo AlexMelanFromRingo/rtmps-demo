@@ -41,7 +41,7 @@ export function restreamTarget(d: Pick<Destination, 'url' | 'key'>): { url: stri
   return { url: `${d.url.replace(/\/+$/, '')}/${d.key}`, format: 'flv' };
 }
 
-export function buildRestreamArgs(inputUrl: string, d: Destination, src: Pick<ProbedSource, 'videoCodec' | 'fps' | 'hasAudio'>): string[] {
+export function buildRestreamArgs(inputUrl: string, d: Destination, src: Pick<ProbedSource, 'videoCodec' | 'fps' | 'hasAudio' | 'track'>): string[] {
   const target = restreamTarget(d);
   const mode = restreamVideoMode(d, src.videoCodec);
   const fps = src.fps > 0 ? Math.min(60, src.fps) : 30;
@@ -50,7 +50,7 @@ export function buildRestreamArgs(inputUrl: string, d: Destination, src: Pick<Pr
     ...inputArgs(inputUrl), '-i', inputUrl];
   // Platforms expect an audio track: synthesize silence for video-only sources.
   if (!src.hasAudio) args.push('-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000');
-  args.push('-map', '0:v:0', '-map', src.hasAudio ? '0:a:0' : '1:a:0');
+  args.push('-map', `0:v:${src.track ?? 0}`, '-map', src.hasAudio ? '0:a:0' : '1:a:0');
   if (mode === 'copy') {
     args.push('-c:v', 'copy');
   } else {

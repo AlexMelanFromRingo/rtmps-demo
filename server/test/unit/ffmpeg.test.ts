@@ -86,3 +86,19 @@ test('input args depend on transport', () => {
   const rtsp = buildTranscodeArgs({ ...base, inputUrl: 'rtsp://ingest:8554/live/k', plan });
   assert.equal(after(rtsp, '-rtsp_transport'), 'tcp');
 });
+
+test('multitrack probe: the largest track is primary, others become extra tracks; args map each track', () => {
+  const s = probeResultToSource([
+    { codec_type: 'video', codec_name: 'h264', width: 640, height: 360, avg_frame_rate: '30/1', profile: 'Main', level: 30 },
+    { codec_type: 'video', codec_name: 'h264', width: 1280, height: 720, avg_frame_rate: '30/1', profile: 'High', level: 31 },
+    { codec_type: 'audio', codec_name: 'aac' },
+  ]);
+  assert.equal(s.width, 1280);
+  assert.equal(s.track, 1);
+  assert.deepEqual(s.extraTracks?.map((t) => [t.track, t.width]), [[0, 640]]);
+  const plan = planLadder(s, 'abr');
+  const args = buildTranscodeArgs({ ...base, inputUrl: 'srt://x', plan, primaryTrack: s.track });
+  const fc = after(args, '-filter_complex')!;
+  assert.match(fc, /^\[0:v:1\]split=/, 'encodes decode the primary (largest) track');
+  assert.ok(args.includes('0:v:1') && args.includes('0:v:0'), 'both provided tracks are mapped');
+});

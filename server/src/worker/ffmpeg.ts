@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process';
 import { codecName } from './codecs.ts';
 import { AUDIO_DIR, AUDIO_GROUP } from './master.ts';
-import type { LadderPlan, ProbedSource, Variant } from './ladder.ts';
+import type { LadderPlan, ProbedSource, ProbedTrack, Variant } from './ladder.ts';
 
 export type Encoder = 'libx264' | 'h264_nvenc' | 'h264_qsv';
 
@@ -23,6 +23,8 @@ export type TranscodeArgsOptions = {
   tsOffsetSec: number;
   /** Keep every segment in storage (the broadcast is being recorded as VOD). */
   keepSegments?: boolean;
+  /** Input video track to decode for encoded renditions/thumbnails (multitrack sources). */
+  primaryTrack?: number;
 };
 
 function encoderArgs(encoder: Encoder, i: number, v: Variant, preset: string, gop: number): string[] {
@@ -93,12 +95,13 @@ export function buildTranscodeArgs(o: TranscodeArgsOptions): string[] {
   const chains = encodes.map((v, i) =>
     `[s${i}]fps=${v.fps},scale=${v.width}:${v.height}:flags=bicubic,format=yuv420p,setsar=1[o${i}]`);
   chains.push(`[s${encodes.length}]fps=1/${o.thumbnailEverySec},scale=w=640:h=360:force_original_aspect_ratio=decrease,format=yuvj420p[thumb]`);
-  args.push('-filter_complex', `[0:v:0]split=${branches}${labels};${chains.join(';')}`);
+  const primary = plan.variants.find((v) => v.name === 'source')?.track ?? o.primaryTrack ?? 0;
+  args.push('-filter_complex', `[0:v:${primary}]split=${branches}${labels};${chains.join(';')}`);
 
   // Video maps in master order (copy maps the source directly).
   let e = 0;
   for (const v of plan.variants) {
-    if (v.kind === 'copy') args.push('-map', '0:v:0');
+    if (v.kind === 'copy') args.push('-map', `0:v:${v.track ?? 0}`);
     else args.push('-map', `[o${e++}]`);
   }
   if (hasAudio) args.push('-map', '0:a:0');
@@ -175,10 +178,7 @@ export function parseRate(rate: string | undefined): number {
   return Number.isFinite(v) ? v : 0;
 }
 
-export function probeResultToSource(streams: ProbeStream[]): ProbedSource {
-  const video = streams.find((s) => s.codec_type === 'video');
-  const audio = streams.find((s) => s.codec_type === 'audio');
-  if (!video) throw new NoVideoError();
+function toTrack(video: ProbeStream): ProbedTrack {
   const avg = parseRate(video.avg_frame_rate);
   const real = parseRate(video.r_frame_rate);
   const fps = avg > 1 && avg <= 240 ? avg : real > 1 && real <= 240 ? real : 30;
@@ -190,8 +190,22 @@ export function probeResultToSource(streams: ProbeStream[]): ProbedSource {
     profile: video.profile,
     level: video.level !== undefined && video.level >= 0 ? video.level : undefined,
     pixFmt: video.pix_fmt,
+  };
+}
+
+export function probeResultToSource(streams: ProbeStream[]): ProbedSource {
+  const videos = streams.filter((s) => s.codec_type === 'video').map((s, track) => ({ ...toTrack(s), track }));
+  const audio = streams.find((s) => s.codec_type === 'audio');
+  if (videos.length === 0) throw new NoVideoError();
+  // Primary = the largest track (multitrack encoders may send it in any order).
+  const primary = videos.reduce((best, v) => (v.width * v.height > best.width * best.height ? v : best));
+  const extra = videos.filter((v) => v !== primary);
+  const { track, ...rest } = primary;
+  return {
+    ...rest,
     hasAudio: audio !== undefined,
     audioCodec: codecName(audio?.codec_name),
+    ...(videos.length > 1 ? { track, extraTracks: extra } : {}),
   };
 }
 

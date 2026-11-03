@@ -22,7 +22,7 @@ export type TranscodeMode = 'abr' | 'passthrough';
 export type PlanMode = TranscodeMode | 'degraded';
 export const DEGRADED_MAX_SHORT = 480;
 
-export type ProbedSource = {
+export type ProbedTrack = {
   videoCodec: string;          // H264 | H265 | AV1 | VP9 | VP8 | ...
   width: number;
   height: number;
@@ -30,8 +30,20 @@ export type ProbedSource = {
   profile?: string | undefined;
   level?: number | undefined;
   pixFmt?: string | undefined;
+};
+
+/** The primary (largest) video track + optional extra renditions sent by the encoder. */
+export type ProbedSource = ProbedTrack & {
   hasAudio: boolean;
   audioCodec?: string | null | undefined;
+  /** Index of the primary track among the input's video streams (0:v:N). */
+  track?: number | undefined;
+  /**
+   * Further video tracks encoded by the streamer's software — OBS "Enhanced
+   * Broadcasting" / multitrack video. Offered as-is; the server only encodes
+   * the rungs nobody sent.
+   */
+  extraTracks?: (ProbedTrack & { track: number })[] | undefined;
 };
 
 export type Variant = {
@@ -47,6 +59,7 @@ export type Variant = {
   maxrateKbps: number;         // peak (BANDWIDTH)
   bufsizeKbps: number;
   h264Level?: number;          // encode only
+  track?: number;              // copy only: input video track (0:v:N)
 };
 
 export type LadderPlan = {
@@ -114,7 +127,7 @@ export function estimateSourceKbps(codec: string, w: number, h: number, fps: num
   return Math.max(500, Math.round((w * h * (fps || 30) * bpp) / 1000 / 100) * 100);
 }
 
-export function sourceCodecString(src: ProbedSource): string {
+export function sourceCodecString(src: ProbedTrack): string {
   const depth = bitDepth(src.pixFmt);
   switch (src.videoCodec) {
     case 'H264': return h264CodecString(src.profile, src.level);
@@ -148,8 +161,37 @@ export function planLadder(src: ProbedSource, mode: PlanMode, rungs: readonly Ru
       bitrateKbps: kbps,
       maxrateKbps: Math.round(kbps * 1.3),
       bufsizeKbps: kbps * 2,
+      track: src.track ?? 0,
     });
   }
+
+  // Extra renditions encoded by the streamer (OBS multitrack / Enhanced Broadcasting).
+  const providedShorts = new Set<number>(copyable ? [srcShort] : []);
+  for (const t of src.extraTracks ?? []) {
+    if (!PASSTHROUGH_CODECS.has(t.videoCodec) || !(t.width > 0 && t.height > 0)) continue;
+    const short = Math.min(t.width, t.height);
+    if (providedShorts.has(short)) continue; // duplicate size
+    providedShorts.add(short);
+    const tfps = t.fps > 0 ? t.fps : srcFps;
+    const kbps = estimateSourceKbps(t.videoCodec, t.width, t.height, tfps);
+    const name = `obs-${renditionName(short, tfps)}`;
+    variants.push({
+      name,
+      label: `${renditionName(short, tfps)} · ${t.videoCodec} (из OBS)`,
+      kind: 'copy',
+      codec: t.videoCodec as Variant['codec'],
+      codecString: sourceCodecString(t),
+      width: t.width,
+      height: t.height,
+      fps: Math.round(tfps * 1000) / 1000,
+      bitrateKbps: kbps,
+      maxrateKbps: Math.round(kbps * 1.3),
+      bufsizeKbps: kbps * 2,
+      track: t.track,
+    });
+  }
+  // A rung the streamer already sends in H.264 needs no server-side encode.
+  const providedH264 = new Set(variants.filter((v) => v.kind === 'copy' && v.codec === 'H264').map((v) => Math.min(v.width, v.height)));
 
   const encodeShorts = new Set<number>();
   const topShort = Math.min(srcShort, MAX_ENCODE_SHORT);
@@ -163,6 +205,7 @@ export function planLadder(src: ProbedSource, mode: PlanMode, rungs: readonly Ru
   }
 
   for (const short of [...encodeShorts].sort((a, b) => b - a)) {
+    if (providedH264.has(short)) continue;
     const fps = cappedFps(srcFps, short <= 480 ? 30 : 60);
     const { width, height } = dimensions(src.width, src.height, short);
     const kbps = bitrateFor(short, fps, rungs);
@@ -188,9 +231,9 @@ export function planLadder(src: ProbedSource, mode: PlanMode, rungs: readonly Ru
   // begin with the first listed variant. Prefer a universally decodable
   // H.264 rendition close to 720p for a fast, compatible start.
   const encodes = variants.filter((v) => v.kind === 'encode');
-  const start = encodes.length > 0
-    ? encodes.reduce((best, v) => (Math.abs(Math.min(v.width, v.height) - 720) < Math.abs(Math.min(best.width, best.height) - 720) ? v : best))
-    : variants[0]!;
+  const h264 = variants.filter((v) => v.codec === 'H264');
+  const startPool = h264.length > 0 ? h264 : variants;
+  const start = startPool.reduce((best, v) => (Math.abs(Math.min(v.width, v.height) - 720) < Math.abs(Math.min(best.width, best.height) - 720) ? v : best));
   const ordered = [start, ...variants.filter((v) => v !== start)];
 
   return {
@@ -208,6 +251,7 @@ export function planLadder(src: ProbedSource, mode: PlanMode, rungs: readonly Ru
  */
 export function sourceUpgraded(planned: ProbedSource, now: ProbedSource): boolean {
   if (now.videoCodec !== planned.videoCodec) return true;
+  if ((now.extraTracks?.length ?? 0) !== (planned.extraTracks?.length ?? 0)) return true; // multitrack changed
   if (now.hasAudio && !planned.hasAudio) return true;
   const before = Math.min(planned.width, planned.height);
   const after = Math.min(now.width, now.height);

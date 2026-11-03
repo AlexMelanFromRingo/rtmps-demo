@@ -225,6 +225,7 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
       segmentSec,
       listSize,
       keepSegments: ctx.vod_enabled,
+      primaryTrack: src.track ?? 0,
       outputBase: deps.receiver.baseUrl(token),
       initTag: `${Date.now().toString(36)}${job.attempts}`,
       thumbnailEverySec: config.worker.thumbnailEverySec,

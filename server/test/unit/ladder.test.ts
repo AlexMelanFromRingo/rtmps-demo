@@ -113,3 +113,29 @@ test('sourceUpgraded: re-plan on resolution growth or codec switch, not on shrin
   assert.equal(sourceUpgraded(src({}), src({ videoCodec: 'H265' })), true, 'codec switch');
   assert.equal(sourceUpgraded(src({ hasAudio: false }), src({})), true, 'audio appeared');
 });
+
+test('multitrack (OBS Enhanced Broadcasting): streamer-encoded renditions are passed through, only missing rungs are encoded', () => {
+  const plan = planLadder(src({
+    width: 1920, height: 1080, fps: 60, track: 0,
+    extraTracks: [
+      { track: 1, videoCodec: 'H264', width: 1280, height: 720, fps: 60, profile: 'High', level: 32 },
+      { track: 2, videoCodec: 'H264', width: 852, height: 480, fps: 30, profile: 'Main', level: 30 },
+    ],
+  }), 'abr');
+  const byName = Object.fromEntries(plan.variants.map((v) => [v.name, v]));
+  assert.equal(byName.source?.track, 0);
+  assert.equal(byName['obs-720p60']?.kind, 'copy');
+  assert.equal(byName['obs-720p60']?.track, 1);
+  assert.equal(byName['obs-480p']?.track, 2);
+  assert.equal(byName['720p60'], undefined, 'the 720p rung comes from OBS, not from the server');
+  assert.equal(byName['480p'], undefined);
+  assert.ok(byName['360p'] && byName['160p'], 'rungs nobody sent are still encoded');
+  assert.equal(plan.variants[0]!.name, 'obs-720p60', 'start with the H.264 rendition closest to 720p');
+});
+
+test('multitrack: a change in the number of tracks triggers re-planning', () => {
+  const one = src({});
+  const two = src({ extraTracks: [{ track: 1, videoCodec: 'H264', width: 1280, height: 720, fps: 30 }] });
+  assert.equal(sourceUpgraded(one, two), true);
+  assert.equal(sourceUpgraded(two, two), false);
+});

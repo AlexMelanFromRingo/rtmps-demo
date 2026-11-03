@@ -7,6 +7,9 @@
 #                                      └──── valkey (presence, pub/sub, rate limits)
 name: streamhub
 
+# Containers do NOT start on their own after a reboot (RESTART_POLICY=no).
+# On a server set RESTART_POLICY=unless-stopped in .env for self-healing + autostart.
+
 x-server-env: &server-env
   NODE_ENV: production
   LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -32,7 +35,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    restart: unless-stopped
+    restart: ${RESTART_POLICY:-no}
 
   valkey:
     image: valkey/valkey:9.1-alpine
@@ -43,7 +46,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    restart: unless-stopped
+    restart: ${RESTART_POLICY:-no}
 
   seaweedfs:
     image: chrislusf/seaweedfs:4.52
@@ -59,7 +62,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
-    restart: unless-stopped
+    restart: ${RESTART_POLICY:-no}
 
   migrate:
     build: { context: ./server, target: api }
@@ -89,7 +92,7 @@ services:
       seaweedfs: { condition: service_healthy }
     deploy:
       replicas: ${API_REPLICAS:-2}
-    restart: unless-stopped
+    restart: ${RESTART_POLICY:-no}
 
   worker:
     build: { context: ./server, target: worker }
@@ -107,7 +110,7 @@ services:
       replicas: ${WORKER_REPLICAS:-2}
     # Time for running transcodes to be handed back to other workers.
     stop_grace_period: 30s
-    restart: unless-stopped
+    restart: ${RESTART_POLICY:-no}
 
   ingest:
     build: ./deploy/ingest
@@ -130,7 +133,7 @@ services:
       - "8189:8189/tcp"    # WebRTC media (TCP fallback)
     depends_on:
       api: { condition: service_started }
-    restart: unless-stopped
+    restart: ${RESTART_POLICY:-no}
 
   # Universal SRT input: any container/codec FFmpeg can read (AV1/VP9 in
   # Matroska/WebM/FLV…), re-published to the ingest node without re-encoding.
@@ -147,7 +150,7 @@ services:
       - "8891:8891/udp"
     depends_on:
       ingest: { condition: service_started }
-    restart: unless-stopped
+    restart: ${RESTART_POLICY:-no}
 
   edge:
     build: { context: ., dockerfile: deploy/edge/Dockerfile }
@@ -157,7 +160,7 @@ services:
     depends_on:
       api: { condition: service_started }
       seaweedfs: { condition: service_healthy }
-    restart: unless-stopped
+    restart: ${RESTART_POLICY:-no}
 
 volumes:
   pgdata:

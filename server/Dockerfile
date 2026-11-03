@@ -4,7 +4,7 @@
 # Node 24 runs the TypeScript sources directly (type stripping), no build step.
 FROM mwader/static-ffmpeg:9.0.2-1 AS ffmpeg
 
-FROM node:24-trixie-slim AS base
+FROM node:26-trixie-slim AS base
 ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json package-lock.json ./

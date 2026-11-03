@@ -54,8 +54,9 @@ pathDefaults:
   source: publisher
   # A reconnecting encoder replaces its own stale session immediately.
   overridePublisher: yes
-  # Readers are transcoders only (+ overlap during failover).
-  maxReaders: 8
+  # Readers are internal only: transcoder + up to 5 multistream pushes + probes,
+  # with headroom for failover overlap.
+  maxReaders: 16
   runOnOnline: /usr/local/bin/notify.sh online
   runOnOffline: /usr/local/bin/notify.sh offline
 

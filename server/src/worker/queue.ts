@@ -22,6 +22,8 @@ export type JobContext = {
   broadcast_started_at: Date;
   channel_id: string;
   transcode_mode: TranscodeMode;
+  low_latency: boolean;
+  vod_enabled: boolean;
 };
 
 export const JOBS_CHANNEL = 'transcode_jobs';
@@ -68,7 +70,7 @@ export async function releaseOrphanedJobs(workerId: string): Promise<number> {
 export async function loadJobContext(jobId: string): Promise<JobContext | null> {
   return one<JobContext>(`
     SELECT b.status AS broadcast_status, b.started_at AS broadcast_started_at,
-           c.id::text AS channel_id, c.transcode_mode
+           c.id::text AS channel_id, c.transcode_mode, c.low_latency, b.vod_enabled
       FROM transcode_jobs j
       JOIN broadcasts b ON b.id = j.broadcast_id
       JOIN channels c ON c.id = b.channel_id
@@ -103,9 +105,9 @@ export async function setJobState(jobId: string, leaseId: string, state: 'finish
                 WHERE id = $1 AND lease_id = $2 AND state = 'running'`, [jobId, leaseId, state, error ?? null]);
 }
 
-export async function updateBroadcastSource(broadcastId: string, src: ProbedSource): Promise<void> {
-  await query(`UPDATE broadcasts SET video_codec = $2, audio_codec = $3, width = $4, height = $5, fps = $6
-                WHERE id = $1`, [broadcastId, src.videoCodec, src.audioCodec ?? null, src.width, src.height, src.fps]);
+export async function updateBroadcastSource(broadcastId: string, src: ProbedSource, latencyMode: 'normal' | 'low'): Promise<void> {
+  await query(`UPDATE broadcasts SET video_codec = $2, audio_codec = $3, width = $4, height = $5, fps = $6, latency_mode = $7
+                WHERE id = $1`, [broadcastId, src.videoCodec, src.audioCodec ?? null, src.width, src.height, src.fps, latencyMode]);
 }
 
 export async function markBroadcastReady(broadcastId: string, variants: Variant[], observed: ObservedBitrates): Promise<void> {

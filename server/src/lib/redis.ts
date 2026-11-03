@@ -23,5 +23,8 @@ export const keys = {
   viewerCount: 'viewer_counts', // HASH broadcastId -> count
   rate: (bucket: string, id: string, window: number) => `rl:${bucket}:${id}:${window}`,
   channelEvents: (channelId: string) => `ev:ch:${channelId}`,
+  overlayEvents: (channelId: string) => `ov:${channelId}`,
+  followAlertOnce: (channelId: string, userId: string) => `ovf:${channelId}:${userId}`,
+  videoView: (videoId: string, viewer: string) => `vv:${videoId}:${viewer}`,
   eventsPattern: 'ev:*',
 };

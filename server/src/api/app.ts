@@ -10,6 +10,11 @@ import { dashboardRoutes } from './routes/dashboard.ts';
 import { internalRoutes } from './routes/internal.ts';
 import { opsRoutes } from './routes/ops.ts';
 import { publicRoutes } from './routes/public.ts';
+import { accountRoutes } from './routes/account.ts';
+import { overlayRoutes } from './routes/overlay.ts';
+import { restreamRoutes } from './routes/restreams.ts';
+import { socialRoutes } from './routes/social.ts';
+import { videoRoutes } from './routes/videos.ts';
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -71,5 +76,10 @@ export async function buildApp() {
   await app.register(publicRoutes);
   await app.register(authRoutes);
   await app.register(dashboardRoutes);
+  await app.register(socialRoutes);
+  await app.register(videoRoutes);
+  await app.register(restreamRoutes);
+  await app.register(overlayRoutes);
+  await app.register(accountRoutes);
   return app;
 }

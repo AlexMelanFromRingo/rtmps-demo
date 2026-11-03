@@ -1,5 +1,5 @@
 import {
-  CreateBucketCommand, DeleteObjectCommand, DeleteObjectsCommand, HeadBucketCommand, ListObjectsV2Command,
+  CreateBucketCommand, DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, HeadBucketCommand, ListObjectsV2Command,
   PutBucketPolicyCommand, PutObjectCommand, S3Client,
 } from '@aws-sdk/client-s3';
 import { config } from '../config.ts';
@@ -51,6 +51,17 @@ export async function putObject(key: string, body: Buffer | string, contentType:
   await s3.send(new PutObjectCommand({
     Bucket: bucket, Key: key, Body: body, ContentType: contentType, CacheControl: cacheControl,
   }), abortSignal ? { abortSignal } : {});
+}
+
+/** Text object or null when it does not exist. */
+export async function getObjectText(key: string): Promise<string | null> {
+  try {
+    const res = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    return (await res.Body?.transformToString('utf8')) ?? null;
+  } catch (err) {
+    if ((err as { name?: string }).name === 'NoSuchKey' || (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404) return null;
+    throw err;
+  }
 }
 
 export async function deleteObject(key: string, abortSignal?: AbortSignal): Promise<void> {

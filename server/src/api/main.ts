@@ -10,6 +10,7 @@ import { installSignalHandlers, onShutdown } from '../lib/shutdown.ts';
 import { runControlLoopWhenLeader } from '../control/loop.ts';
 import { buildApp } from './app.ts';
 import { hub } from './sse.ts';
+import { overlayHub } from './overlay.ts';
 
 process.env.SERVICE_NAME ??= 'api';
 assertProductionSafety((msg) => log.warn(msg));
@@ -20,6 +21,7 @@ ensureBucket().catch((err: Error) => log.warn({ err: err.message }, 'bucket chec
 
 const app = await buildApp();
 hub.start();
+overlayHub.start();
 
 const stopLeader = new AbortController();
 const leader = process.env.CONTROL_LOOP === 'false'
@@ -28,7 +30,7 @@ const leader = process.env.CONTROL_LOOP === 'false'
 
 onShutdown(async () => { await pool.end().catch(() => {}); redis.disconnect(); });
 onShutdown(async () => { await app.close(); });
-onShutdown(async () => { await hub.close(); });
+onShutdown(async () => { await hub.close(); await overlayHub.close(); });
 onShutdown(async () => { stopLeader.abort(); await leader; });
 
 await app.listen({ host: config.api.host, port: config.api.port });

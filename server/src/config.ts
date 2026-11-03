@@ -70,6 +70,8 @@ export const config = {
     srtAnyUrl: str('PUBLIC_SRT_ANY_URL', 'srt://localhost:8891'),
     whipUrl: str('PUBLIC_WHIP_URL', 'http://localhost:8889'),
     hlsBase: str('PUBLIC_HLS_BASE', '/hls'),
+    // Avatars and other user media (same bucket, served by the edge under /media).
+    mediaBase: str('PUBLIC_MEDIA_BASE', '/media'),
   },
 
   control: {
@@ -77,8 +79,13 @@ export const config = {
     reconnectGraceSec: int('RECONNECT_GRACE_SEC', 30),
     viewerTtlSec: int('VIEWER_TTL_SEC', 45),
     ingestNodeTimeoutSec: int('INGEST_NODE_TIMEOUT_SEC', 15),
-    // How long HLS objects of an ended broadcast stay in object storage.
+    // How long HLS objects of an ended broadcast stay in object storage
+    // when it is not kept as a VOD (recording disabled or deleted).
     retentionMinutes: int('RETENTION_MINUTES', 120),
+    // How long recordings (VOD) of past broadcasts are kept.
+    vodRetentionDays: int('VOD_RETENTION_DAYS', 7),
+    // Viewer/bitrate samples for the studio health graphs.
+    sampleEverySec: int('HEALTH_SAMPLE_SEC', 10),
     // Max transcode attempts per ingest session before giving up.
     maxJobAttempts: int('MAX_JOB_ATTEMPTS', 30),
   },
@@ -98,6 +105,9 @@ export const config = {
     encoder: str('ENCODER', 'auto'), // auto | libx264 | h264_nvenc | h264_qsv
     x264Preset: str('X264_PRESET', 'veryfast'),
     segmentSec: int('HLS_SEGMENT_SEC', 2),
+    // Channels with "low latency" enabled use 1 s segments (≈ 3–4 s glass-to-glass).
+    lowLatencySegmentSec: int('HLS_LOW_LATENCY_SEGMENT_SEC', 1),
+    restreamMax: int('RESTREAM_MAX_PER_CHANNEL', 5),
     listSize: int('HLS_LIST_SIZE', 6),
     thumbnailEverySec: int('THUMBNAIL_INTERVAL_SEC', 10),
     leaseSec: int('JOB_LEASE_SEC', 10),

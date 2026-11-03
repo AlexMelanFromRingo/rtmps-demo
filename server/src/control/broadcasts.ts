@@ -59,7 +59,7 @@ export async function getNode(id: string): Promise<IngestNode | null> {
 export type StreamEvent = { node: string; path: string; sourceType?: string | undefined; sourceId: string; query?: string | undefined };
 
 type ActiveBroadcast = { id: string; status: string; source_id: string | null; ingest_node: string | null; ingest_path: string | null };
-type LockedChannel = { id: string; title: string; category: string };
+type LockedChannel = { id: string; title: string; category: string; save_vods: boolean };
 
 /**
  * Resolves and locks the channel an ingest path belongs to. An active
@@ -74,7 +74,7 @@ async function lockChannelForPath(c: pg.PoolClient, path: string, key: string): 
     SELECT id::text FROM channels WHERE stream_key = $2
     LIMIT 1`, [path, key], c);
   if (!owner) return null;
-  return one<LockedChannel>('SELECT id::text, title, category FROM channels WHERE id = $1 FOR UPDATE', [owner.id], c);
+  return one<LockedChannel>('SELECT id::text, title, category, save_vods FROM channels WHERE id = $1 FOR UPDATE', [owner.id], c);
 }
 
 /** Stream became available on an ingest node. Returns the broadcast id. */
@@ -108,11 +108,11 @@ export async function handleOnline(ev: StreamEvent, extra?: { videoCodec?: strin
     } else {
       b = (await one<ActiveBroadcast>(
         `INSERT INTO broadcasts (channel_id, status, title, category, ingest_node, source_id, source_url, protocol,
-                                 video_codec, audio_codec, width, height, source_srt_url, ingest_path)
-         VALUES ($1, 'live', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                                 video_codec, audio_codec, width, height, source_srt_url, ingest_path, vod_enabled)
+         VALUES ($1, 'live', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING id, status, source_id, ingest_node, ingest_path`,
         [ch.id, ch.title, ch.category, ev.node, ev.sourceId, sourceUrl, protocol,
-          extra?.videoCodec ?? null, extra?.audioCodec ?? null, extra?.width ?? null, extra?.height ?? null, sourceSrtUrl, ev.path], c))!;
+          extra?.videoCodec ?? null, extra?.audioCodec ?? null, extra?.width ?? null, extra?.height ?? null, sourceSrtUrl, ev.path, ch.save_vods], c))!;
     }
 
     // Exactly one active job, bound to the current ingest connection.

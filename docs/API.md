@@ -181,3 +181,163 @@ CORS разрешён для любых origin. Кодек выбирается 
 качестве пароля — так его передаёт MediaMTX из URL `http://mediamtx:<secret>@api/...`).
 | `GET` | `/healthz`, `/readyz` | оркестратор |
 | `GET` | `/metrics` | Prometheus |
+
+---
+
+# v2: сообщество, записи, мультистрим, оверлеи, безопасность
+
+Все правила выше (JSON, CSRF, формат ошибок) действуют и здесь. Новые коды ошибок:
+`totp_required` (401), `totp_invalid` (401), `conflict` (409), `payload_too_large` (413).
+
+## Расширения типов
+
+```ts
+type ChannelPublic = {
+  slug: string; displayName: string; title: string; category: string;
+  // v2:
+  avatarUrl: string | null;              // /media/avatars/…  (null → монограмма)
+  bio: string;                           // до 300 символов
+  links: { label: string; url: string }[]; // до 5, только https://
+  followers: number;
+  mature: boolean;                       // 18+: зритель подтверждает перед просмотром
+};
+
+type LiveInfo = { /* … как выше … */ latencyMode: 'normal' | 'low' };
+
+type User = { /* … */ twoFactorEnabled: boolean };
+
+type Video = {                           // запись прошедшего эфира (VOD)
+  id: string;                            // == broadcastId
+  channel: ChannelPublic;
+  title: string; category: string;
+  startedAt: string; endedAt: string;
+  durationSec: number;
+  thumbnailUrl: string | null;
+  playbackUrl: string;                   // VOD master.m3u8 (EXT-X-ENDLIST, перемотка)
+  views: number;
+  expiresAt: string;                     // когда запись будет удалена
+  renditions: Rendition[];
+};
+
+type Category = { name: string; liveCount: number; viewers: number; thumbnailUrl: string | null };
+
+type RestreamDestination = {
+  id: string;
+  name: string;
+  service: 'twitch' | 'youtube' | 'kick' | 'custom';
+  url: string;                           // rtmp:// | rtmps:// | srt://  (без ключа)
+  keyMasked: string;                     // "••••••3f9a" — ключ целиком не возвращается никогда
+  enabled: boolean;
+  transcode: 'auto' | 'copy' | 'h264';   // auto: копия для H.264-источника, иначе перекодирование в H.264
+};
+
+type RestreamStatus = {
+  id: string;                            // == destination id
+  state: 'connecting' | 'live' | 'error';
+  error: string | null;
+  since: string;
+};
+```
+
+`GET /api/channels/:slug` дополнительно возвращает `"viewer": { "following": boolean } | null`
+(`null` для анонима).
+
+## Подписки (follows)
+
+| Метод | Путь | Ответ |
+|---|---|---|
+| `POST` | `/api/channels/:slug/follow` | `{ "following": true, "followers": n }` (нужна cookie; на свой канал — `400`) |
+| `DELETE` | `/api/channels/:slug/follow` | `{ "following": false, "followers": n }` |
+| `GET` | `/api/me/following` | `{ "channels": [{ "channel": ChannelPublic, "live": LiveInfo \| null }] }` — сначала живые (по зрителям), потом остальные |
+
+## Каталог и поиск
+
+- `GET /api/streams?category=<имя>` — фильтр по категории (без учёта регистра). Без параметра — как раньше.
+- `GET /api/categories` → `{ "categories": Category[] }`: категории с живыми эфирами (по зрителям) +
+  популярные за 30 дней (`liveCount: 0`), максимум 48.
+- `GET /api/search?q=<≥2 символов>` → `{ "channels": [{ "channel": ChannelPublic, "live": LiveInfo | null }], "categories": Category[] }`
+  (до 20 каналов: живые первыми; поиск по логину, имени, названию эфира).
+
+## Записи эфиров (VOD)
+
+Каждый эфир записывается (все качества, без перекодирования сверх ABR) и после окончания доступен
+как видео с перемоткой. Хранится `VOD_RETENTION_DAYS` (по умолчанию 7 дней). Стример может
+отключить запись (`saveVods: false`) или удалить видео.
+
+| Метод | Путь | Ответ |
+|---|---|---|
+| `GET` | `/api/channels/:slug/videos?limit=20` | `{ "videos": Video[] }` (новые первыми) |
+| `GET` | `/api/videos/:id` | `{ "video": Video }` или `404` |
+| `POST` | `/api/videos/:id/view` | `{ viewerId }` → `204` (считается раз на зрителя за 6 ч) |
+| `DELETE` | `/api/videos/:id` | `204` (только владелец) |
+
+## Мультистрим (ретрансляция на Twitch / YouTube / Kick / свой сервер)
+
+Включённые направления запускаются автоматически, когда канал выходит в эфир, и останавливаются
+вместе с ним. Видео копируется без потерь, если направление принимает кодек (`auto`), звук всегда
+приводится к AAC. Максимум 5 направлений.
+
+| Метод | Путь | Тело / ответ |
+|---|---|---|
+| `GET` | `/api/channel/restreams` | `{ "destinations": RestreamDestination[] }` |
+| `POST` | `/api/channel/restreams` | `{ name, service, url, streamKey, enabled?, transcode? }` → `201 { "destination" }` |
+| `PATCH` | `/api/channel/restreams/:id` | любые поля из POST (пустой `streamKey` = не менять) → `{ "destination" }` |
+| `DELETE` | `/api/channel/restreams/:id` | `204` |
+
+Пресеты URL (их подставляет UI): Twitch `rtmp://live.twitch.tv/app`, YouTube
+`rtmp://a.rtmp.youtube.com/live2`, Kick `rtmps://fa723fc1b171.global-contribute.live-video.net/app`.
+
+## Оверлей для OBS (Browser Source)
+
+У канала есть секретная ссылка оверлея `/overlay/<token>` (прозрачная страница для OBS «Браузер»):
+всплывающие оповещения о новых подписчиках и счётчик зрителей.
+
+- `GET /api/overlay/:token/events` — SSE: `event: alert` `{"type":"follow","displayName":"…","at":"…"}`,
+  `event: stats` `{"live":bool,"viewers":n}` (при подключении и при изменениях), `event: ping` каждые 15 с.
+  Неверный токен → `404`.
+- `POST /api/channel/overlay/test` → `204` (тестовое оповещение).
+- `POST /api/channel/overlay/reset` → `{ "overlayUrl" }` (старая ссылка перестаёт работать).
+- Параметры страницы: `?alerts=0|1&viewers=0|1&sound=0|1` (по умолчанию все `1`).
+
+## Профиль и настройки канала
+
+`PATCH /api/channel` дополнительно принимает:
+`{ bio?, links?, mature?, saveVods?, lowLatency? }`.
+- `lowLatency: true` — сегменты 1 с и агрессивная синхронизация плеера (задержка ≈ 3–4 с вместо 6–10 с;
+  применяется со следующего запуска эфира).
+
+Аватар: `POST /api/channel/avatar` с телом
+`{ "contentType": "image/png" | "image/jpeg" | "image/webp", "data": "<base64, ≤ 2 МБ>" }`
+→ `{ "avatarUrl" }`; `DELETE /api/channel/avatar` → `204`.
+
+## Студия (дополнения к `GET /api/dashboard`)
+
+```ts
+channel: ChannelPublic & {
+  transcodeMode; bio; links; mature: boolean; saveVods: boolean; lowLatency: boolean;
+  overlayUrl: string;                    // относительный путь /overlay/<token>
+}
+live.stats.restreams: RestreamStatus[]   // по включённым направлениям
+```
+
+`GET /api/dashboard/health?broadcastId=<id>` (по умолчанию — текущий/последний эфир) →
+`{ "samples": [{ "ts": "…", "viewers": n, "ingestKbps": n | null }] }` — точки каждые 10 с
+(для графиков «битрейт» и «зрители»).
+
+## Аккаунт и безопасность
+
+| Метод | Путь | Тело / ответ |
+|---|---|---|
+| `POST` | `/api/me/password` | `{ currentPassword, newPassword }` → `204`, все остальные сессии завершаются |
+| `GET` | `/api/me/sessions` | `{ "sessions": [{ id, createdAt, lastSeenAt, userAgent, ip, current }] }` |
+| `DELETE` | `/api/me/sessions/:id` | `204` |
+| `POST` | `/api/me/sessions/revoke-others` | `204` |
+| `GET` | `/api/me/2fa` | `{ "enabled": bool }` |
+| `POST` | `/api/me/2fa/setup` | → `{ "secret": "BASE32", "otpauthUrl": "otpauth://totp/StreamHub:user?…" }` (QR рисует клиент) |
+| `POST` | `/api/me/2fa/enable` | `{ code }` → `{ "recoveryCodes": ["xxxx-xxxx", … ×8] }` (показываются один раз) |
+| `POST` | `/api/me/2fa/disable` | `{ password, code }` → `204` |
+
+Двухфакторный вход (TOTP, RFC 6238: 6 цифр, шаг 30 с): если у пользователя включена 2FA,
+`POST /api/auth/login` без поля `totp` отвечает `401 totp_required`; клиент повторяет запрос
+с `{ username, password, totp }`, где `totp` — код из приложения или резервный код. Неверный код →
+`401 totp_invalid`.

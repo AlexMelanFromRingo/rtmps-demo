@@ -21,6 +21,8 @@ export type TranscodeArgsOptions = {
   thumbnailEverySec: number;
   /** Seconds since the broadcast started: keeps timestamps monotonic across failovers. */
   tsOffsetSec: number;
+  /** Keep every segment in storage (the broadcast is being recorded as VOD). */
+  keepSegments?: boolean;
 };
 
 function encoderArgs(encoder: Encoder, i: number, v: Variant, preset: string, gop: number): string[] {
@@ -134,7 +136,7 @@ export function buildTranscodeArgs(o: TranscodeArgsOptions): string[] {
     '-hls_fmp4_init_filename', `init_${o.initTag}_%v.mp4`,
     // omit_endlist: stopping ffmpeg (failover, deploy, re-plan) must NOT tell
     // players the live stream is over.
-    '-hls_flags', 'independent_segments+program_date_time+delete_segments+discont_start+omit_endlist',
+    '-hls_flags', `independent_segments+program_date_time+discont_start+omit_endlist${o.keepSegments ? '' : '+delete_segments'}`,
     // Epoch-based media sequence: a failed-over transcode continues with
     // higher sequence numbers instead of colliding with cached segments.
     '-hls_start_number_source', 'epoch',

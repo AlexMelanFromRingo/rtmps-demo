@@ -17,6 +17,22 @@
   переподключение стримера в течение 30 с — тот же эфир; потерянные события чинит сверка.
 - **Мягкая деградация:** если мощностей не хватает, эфир стартует в режиме «только исходник».
 
+### Функции уровня Twitch / YouTube / Streamlabs
+
+| Функция | Аналог | Как устроено |
+|---|---|---|
+| Подписки на каналы, «Отслеживаемые» | Twitch Follow, YouTube Subscribe | счётчик подписчиков, живые каналы из подписок первыми |
+| Записи эфиров (VOD) с перемоткой | Twitch Past Broadcasts, YouTube Live replay | каждый эфир пишется во всех качествах без доп. перекодирования; переживает failover; хранится `VOD_RETENTION_DAYS` |
+| Мультистрим на Twitch / YouTube / Kick / свой RTMP(S)/SRT | Streamlabs Multistream, Restream | серверная ретрансляция, видео копируется, если платформа принимает кодек; статус по каждому направлению |
+| Оповещения о подписчиках и счётчик зрителей в OBS | Streamlabs Alerts / виджеты | секретная ссылка для OBS «Браузер», тестовое оповещение |
+| Режим низкой задержки | Twitch Low Latency, YouTube «низкая задержка» | сегменты 1 с, ≈ 3–4 с вместо 6–10 с |
+| Каталог категорий и поиск | Twitch Browse | живые категории по зрителям, поиск по каналам и названиям (pg_trgm) |
+| Профиль канала: аватар, описание, ссылки, 18+ | Twitch «О канале», Mature Content | аватар проверяется по сигнатуре файла, 18+ — экран подтверждения |
+| Здоровье эфира | Twitch Stream Manager, OBS Stats | графики входного битрейта и зрителей, скорость транскода |
+| 2FA (TOTP) + резервные коды | Twitch/YouTube 2-Step | RFC 6238, защита от повтора кода, секреты зашифрованы AES-256-GCM |
+| Управление сессиями, смена пароля | «Устройства» в аккаунте | выход на других устройствах, при смене пароля — автоматически |
+| AV1 / HEVC без перекодирования | Twitch Enhanced Broadcasting (AV1), YouTube HEVC/AV1 ingest | Enhanced RTMP, WHIP, универсальный SRT |
+
 ## Быстрый старт
 
 Нужен Docker с Compose v2.
@@ -90,7 +106,7 @@ OBS/браузер ─RTMP/SRT/WHIP─▶ ingest (MediaMTX) ──RTSP/SRT──
 
 Подробно: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — решения, модель данных, сценарии
 отказов. API: [docs/API.md](docs/API.md). Продакшен и масштабирование:
-[docs/OPERATIONS.md](docs/OPERATIONS.md).
+[docs/OPERATIONS.md](docs/OPERATIONS.md). Мониторинг: [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md).
 
 ## Конфигурация
 
@@ -106,6 +122,10 @@ OBS/браузер ─RTMP/SRT/WHIP─▶ ingest (MediaMTX) ──RTSP/SRT──
 | `WORKER_SLOTS` | 2 | одновременных полных транскодов на воркер |
 | `ENCODER` | `auto` | `libx264` / `h264_nvenc` / `h264_qsv` (auto проверяет железо) |
 | `LADDER` | `1080,720,480,360,160` | ступени H.264-лестницы |
+| `VOD_RETENTION_DAYS` | 7 | сколько хранятся записи эфиров |
+| `RESTREAM_ALLOW_PRIVATE` | `false` | разрешить мультистрим во внутреннюю сеть (только для тестов) |
+| `RESTART_POLICY` | `no` | `unless-stopped` — автозапуск и перезапуск контейнеров на сервере |
+| `DATA_ENCRYPTION_KEY` | из `INTERNAL_SECRET` | ключ шифрования секретов 2FA и ключей мультистрима |
 
 ## Разработка
 
@@ -124,7 +144,8 @@ docs/     архитектура, API, эксплуатация
 cd server && npm ci
 npm run typecheck
 npm test                  # unit-тесты (ladder, codecs, ffmpeg-аргументы, порядок выгрузки…)
-npm run test:e2e          # e2e против запущенного `docker compose up` (нужен docker)
+npm run test:e2e          # e2e против запущенного `docker compose up` (нужен docker);
+                          # для проверки мультистрима: RESTREAM_ALLOW_PRIVATE=true docker compose up -d
 cd ../deploy/srt-gateway && go test ./...   # шлюз SRT
 
 cd web && npm ci && npm run dev   # фронтенд с hot reload, проксирует /api и /hls на :8080

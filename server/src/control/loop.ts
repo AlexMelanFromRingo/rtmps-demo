@@ -7,7 +7,8 @@ import { connectionOptions, query } from '../lib/db.ts';
 import { publishChannelEvent } from '../lib/events.ts';
 import { log } from '../lib/log.ts';
 import { keys, redis } from '../lib/redis.ts';
-import { deletePrefix, objectKeys } from '../lib/s3.ts';
+import { deletePrefix, getObjectText, objectKeys, putObject } from '../lib/s3.ts';
+import { VOD_PLAYLIST, finalizeVodPlaylist, vodDuration } from '../worker/vod.ts';
 import { sleep } from '../lib/shutdown.ts';
 import {
   finalizeExpired, handleOffline, handleOnline, streamKeyFromPath, type IngestNode,
@@ -77,6 +78,7 @@ export class ControlLoop {
     await this.step('finalize', () => finalizeExpired());
     await this.step('jobs', () => this.healJobs());
     await this.step('viewers', () => this.countViewers());
+    await this.step('vod', () => this.finalizeVods());
     if (Date.now() - this.lastHousekeepingAt > 60_000) {
       this.lastHousekeepingAt = Date.now();
       await this.step('housekeeping', () => this.housekeeping());
@@ -222,7 +224,7 @@ export class ControlLoop {
       await query(`UPDATE broadcasts b SET peak_viewers = GREATEST(b.peak_viewers, v.n)
                      FROM unnest($1::uuid[], $2::int[]) AS v(id, n) WHERE b.id = v.id AND v.n > b.peak_viewers`,
       [counts.map((c) => c.id), counts.map((c) => c.viewers)]);
-      if (Date.now() - this.lastSampleAt > 30_000) {
+      if (Date.now() - this.lastSampleAt > config.control.sampleEverySec * 1000) {
         this.lastSampleAt = Date.now();
         await query(`INSERT INTO broadcast_samples (broadcast_id, viewers, ingest_kbps)
                      SELECT v.id, v.n, b.ingest_kbps FROM unnest($1::uuid[], $2::int[]) AS v(id, n)
@@ -232,10 +234,36 @@ export class ControlLoop {
     }
   }
 
+  /** Turn the recordings of ended broadcasts into finished VOD playlists. */
+  async finalizeVods(): Promise<void> {
+    const rows = await query<{ id: string; renditions: { name: string }[] }>(`
+      SELECT id, renditions FROM broadcasts
+       WHERE status = 'ended' AND vod_enabled AND vod_finalized_at IS NULL AND NOT storage_purged
+         AND ended_at < now() - interval '5 seconds'
+       ORDER BY ended_at LIMIT 10`);
+    for (const b of rows) {
+      const names = [...b.renditions.map((r) => r.name), 'audio'];
+      let duration = 0;
+      for (const name of names) {
+        const key = `${objectKeys.prefix(b.id)}${name}/${VOD_PLAYLIST}`;
+        const text = await getObjectText(key);
+        if (!text) continue;
+        const final = finalizeVodPlaylist(text);
+        await putObject(key, final, 'application/vnd.apple.mpegurl', 'public, max-age=3600');
+        if (name === b.renditions[0]?.name) duration = vodDuration(final);
+      }
+      await query('UPDATE broadcasts SET vod_finalized_at = now(), vod_duration_sec = $2 WHERE id = $1', [b.id, duration]);
+      log.info({ broadcast: b.id, durationSec: Math.round(duration) }, 'recording finalized');
+    }
+  }
+
   async housekeeping(): Promise<void> {
+    // Recordings are kept VOD_RETENTION_DAYS; everything else RETENTION_MINUTES.
     const ended = await query<{ id: string }>(`
       SELECT id FROM broadcasts WHERE status = 'ended' AND NOT storage_purged
-         AND ended_at < now() - make_interval(mins => $1) ORDER BY ended_at LIMIT 25`, [config.control.retentionMinutes]);
+         AND ended_at < now() - CASE WHEN vod_enabled AND NOT vod_deleted
+                                     THEN make_interval(days => $2) ELSE make_interval(mins => $1) END
+       ORDER BY ended_at LIMIT 25`, [config.control.retentionMinutes, config.control.vodRetentionDays]);
     for (const b of ended) {
       const n = await deletePrefix(objectKeys.prefix(b.id));
       await query('UPDATE broadcasts SET storage_purged = true WHERE id = $1', [b.id]);

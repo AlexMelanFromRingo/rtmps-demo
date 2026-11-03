@@ -81,6 +81,8 @@ services:
       MIGRATE_ON_START: "false"
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      VOD_RETENTION_DAYS: ${VOD_RETENTION_DAYS:-7}
+      RESTREAM_ALLOW_PRIVATE: ${RESTREAM_ALLOW_PRIVATE:-false}
       PUBLIC_RTMP_URL: ${PUBLIC_RTMP_URL:-rtmp://localhost:1935/live}
       PUBLIC_SRT_URL: ${PUBLIC_SRT_URL:-srt://localhost:8890}
       PUBLIC_SRT_ANY_URL: ${PUBLIC_SRT_ANY_URL:-srt://localhost:8891}
@@ -103,6 +105,8 @@ services:
       ENCODER: ${ENCODER:-auto}
       X264_PRESET: ${X264_PRESET:-veryfast}
       LADDER: ${LADDER:-1080,720,480,360,160}
+      # Multistream targets in private networks are blocked (SSRF) unless allowed explicitly.
+      RESTREAM_ALLOW_PRIVATE: ${RESTREAM_ALLOW_PRIVATE:-false}
     depends_on:
       migrate: { condition: service_completed_successfully }
       seaweedfs: { condition: service_healthy }

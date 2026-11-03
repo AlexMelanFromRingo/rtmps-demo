@@ -6,7 +6,9 @@ import { config } from '../config.ts';
 import { publishChannelEvent } from '../lib/events.ts';
 import { log as rootLog } from '../lib/log.ts';
 import { redact } from '../lib/redact.ts';
-import { deleteObject, objectKeys, putObject } from '../lib/s3.ts';
+import { deleteObject, getObjectText, objectKeys, putObject } from '../lib/s3.ts';
+import { RestreamManager } from './restream.ts';
+import { VodRecorder } from './vod.ts';
 import { buildTranscodeArgs, choosePullUrl, parseProgress, probeSource, type Encoder, type Progress } from './ffmpeg.ts';
 import { parseRungs, planLadder, sourceUpgraded } from './ladder.ts';
 import { JobOutput } from './output.ts';
@@ -92,6 +94,10 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
   let renditionCount = 0;
   let sourceChanged = false;
   let watch: NodeJS.Timeout | undefined;
+  let vodTimer: NodeJS.Timeout | undefined;
+  let restreamTimer: NodeJS.Timeout | undefined;
+  let vod: VodRecorder | null = null;
+  let restream: RestreamManager | null = null;
 
   // Lease keeper + fencing. A lease is renewed every heartbeatSec; the DB
   // sets its expiry to (renewal start + leaseSec) at the earliest. If we have
@@ -116,6 +122,7 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
         fps: progress.fps, speed: progress.speed, encoder: deps.encoder, renditions: renditionCount, degraded: deps.degraded,
         uploads: output?.stats.uploads ?? 0, uploadFailures: output?.stats.failures ?? 0,
         pendingUploads: output?.stats.pending ?? 0, worker: workerId,
+        restreams: restream?.statuses() ?? [],
       };
       heartbeat(job.id, job.lease_id, config.worker.leaseSec, stats).then((owned) => {
         if (owned) lastRenewStart = started;
@@ -161,14 +168,39 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
     const src = await probeSource(config.worker.ffprobePath, withReadCredentials(job.source_url));
     const sourceUrl = choosePullUrl(src, job.source_url, job.source_srt_url, config.worker.ingestReadUser, config.internalSecret);
     log.info({ src, transport: sourceUrl.slice(0, sourceUrl.indexOf(':')) }, 'source probed');
-    await updateBroadcastSource(job.broadcast_id, src);
+    // Low-latency channels: 1 s segments (≈ 3–4 s glass-to-glass instead of 6–10 s).
+    const latencyMode = ctx.low_latency ? 'low' as const : 'normal' as const;
+    const segmentSec = ctx.low_latency ? config.worker.lowLatencySegmentSec : config.worker.segmentSec;
+    const listSize = ctx.low_latency ? Math.max(config.worker.listSize, 10) : config.worker.listSize;
+    await updateBroadcastSource(job.broadcast_id, src, latencyMode);
     await publishChannelEvent(ctx.channel_id, { kind: 'state' });
 
     const plan = planLadder(src, deps.degraded ? 'degraded' : ctx.transcode_mode, rungs);
     if (deps.degraded) log.warn('no transcoding capacity — serving the source only (degraded)');
     renditionCount = plan.variants.length;
     token = randomUUID();
+
+    // VOD: record every segment; continue what earlier attempts recorded.
+    if (ctx.vod_enabled) {
+      vod = new VodRecorder({
+        prefix: objectKeys.prefix(job.broadcast_id),
+        log,
+        put: (key, body) => putObject(key, body, 'application/vnd.apple.mpegurl', 'public, max-age=2'),
+        get: getObjectText,
+      });
+      await vod.resume([...plan.variants.map((v) => v.name), ...(plan.audio ? ['audio'] : [])]);
+      vodTimer = setInterval(() => void vod?.flush(), 10_000);
+    }
+
+    // Multistream to the channel's external destinations while we are live.
+    restream = new RestreamManager({ channelId: ctx.channel_id, inputUrl: sourceUrl, src, log });
+    await restream.sync().catch((err: Error) => log.warn({ err: err.message }, 'restream sync failed'));
+    restreamTimer = setInterval(() => {
+      restream?.sync().catch((err: Error) => log.warn({ err: err.message }, 'restream sync failed'));
+    }, 15_000);
+
     output = new JobOutput({
+      vod,
       prefix: objectKeys.prefix(job.broadcast_id),
       plan,
       log,
@@ -190,8 +222,9 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
       plan,
       encoder: deps.encoder,
       x264Preset: config.worker.x264Preset,
-      segmentSec: config.worker.segmentSec,
-      listSize: config.worker.listSize,
+      segmentSec,
+      listSize,
+      keepSegments: ctx.vod_enabled,
       outputBase: deps.receiver.baseUrl(token),
       initTag: `${Date.now().toString(36)}${job.attempts}`,
       thumbnailEverySec: config.worker.thumbnailEverySec,
@@ -222,8 +255,13 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
 
     const result = await runFfmpeg(args, kill.signal, (p) => { progress = p; });
     clearInterval(watch);
+    restream.stop();
     if (leaseLost) output.abort();
-    else await output.drain();
+    else {
+      await output.drain();
+      clearInterval(vodTimer);
+      await vod?.flush(); // the recording includes the very last segments
+    }
     log.info({ code: result.code, signal: result.signal, ranSec: Math.round(result.ranMs / 1000) }, 'ffmpeg exited');
     metrics.ffmpegExits.inc({ reason: leaseLost ? 'lease' : deps.isShuttingDown() ? 'shutdown' : 'exit' });
 
@@ -251,6 +289,9 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
   } finally {
     clearInterval(hb);
     clearInterval(watch);
+    clearInterval(vodTimer);
+    clearInterval(restreamTimer);
+    restream?.stop();
     output?.abort();
     deps.shutdown.removeEventListener('abort', onShutdown);
     if (token) deps.receiver.unregister(token);

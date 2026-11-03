@@ -18,13 +18,13 @@ export function effectiveBitrates(v: Variant, observed: ObservedBitrates): { avg
   return { avg: v.bitrateKbps, peak: v.maxrateKbps };
 }
 
-export function buildMasterPlaylist(plan: LadderPlan, observed: ObservedBitrates = {}): string {
+export function buildMasterPlaylist(plan: LadderPlan, observed: ObservedBitrates = {}, playlist = 'index.m3u8'): string {
   const lines = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-INDEPENDENT-SEGMENTS'];
   const audioKbps = plan.audio?.bitrateKbps ?? 0;
 
   if (plan.audio) {
     lines.push(
-      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="${AUDIO_GROUP}",NAME="main",LANGUAGE="und",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="2",URI="${AUDIO_DIR}/index.m3u8"`,
+      `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="${AUDIO_GROUP}",NAME="main",LANGUAGE="und",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="2",URI="${AUDIO_DIR}/${playlist}"`,
     );
   }
 
@@ -43,7 +43,7 @@ export function buildMasterPlaylist(plan: LadderPlan, observed: ObservedBitrates
       ...(plan.audio ? [`AUDIO="${AUDIO_GROUP}"`] : []),
       `NAME="${v.name}"`,
     ];
-    lines.push(`#EXT-X-STREAM-INF:${attrs.join(',')}`, `${v.name}/index.m3u8`);
+    lines.push(`#EXT-X-STREAM-INF:${attrs.join(',')}`, `${v.name}/${playlist}`);
   }
   return `${lines.join('\n')}\n`;
 }

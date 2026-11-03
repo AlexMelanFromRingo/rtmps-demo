@@ -6,6 +6,7 @@ import { buildMasterPlaylist, parseMediaPlaylist, AUDIO_DIR, type ObservedBitrat
 import type { LadderPlan, Variant } from './ladder.ts';
 import type { FileEvent, JobSink } from './receiver.ts';
 import type { Logger } from '../lib/log.ts';
+import { VOD_PLAYLIST, type VodRecorder } from './vod.ts';
 
 export type PutFn = (key: string, body: Buffer | string, contentType: string, cacheControl: string, signal: AbortSignal) => Promise<void>;
 export type DeleteFn = (key: string, signal: AbortSignal) => Promise<void>;
@@ -69,13 +70,17 @@ export class JobOutput implements JobSink {
   private readonly settleMs: number;
   private settleTimer: NodeJS.Timeout | null = null;
   private settled = false;
+  private readonly vod: VodRecorder | null;
 
   constructor(opts: {
     prefix: string; plan: LadderPlan; put: PutFn; del: DeleteFn;
     onReady: (info: ReadyInfo) => Promise<void>; log: Logger;
     /** How long to wait for the remaining variants before the first master is published. */
     settleMs?: number;
+    /** Records the broadcast as VOD (null when recording is disabled). */
+    vod?: VodRecorder | null;
   }) {
+    this.vod = opts.vod ?? null;
     this.settleMs = opts.settleMs ?? 3000;
     this.prefix = opts.prefix;
     this.plan = opts.plan;
@@ -103,6 +108,7 @@ export class JobOutput implements JobSink {
         // Never publish a playlist entry whose segment failed to upload.
         const text = withoutSegments(body.toString('utf8'), this.failedSegments.get(variant) ?? new Set());
         await this.put(key, text, meta.contentType, meta.cacheControl, signal);
+        this.vod?.onPlaylist(variant, text);
         await this.onPlaylistUploaded(variant, text);
       } else if (isSegment && variant) {
         await this.putWithRetry(key, body, meta, signal, variant, file);
@@ -228,6 +234,10 @@ export class JobOutput implements JobSink {
 
     const text = buildMasterPlaylist({ ...this.plan, variants: ready }, this.observed);
     await this.put(`${this.prefix}master.m3u8`, text, 'application/vnd.apple.mpegurl', 'public, max-age=2', this.abortCtl.signal);
+    if (this.vod) {
+      const vodMaster = buildMasterPlaylist({ ...this.plan, variants: ready }, this.observed, VOD_PLAYLIST);
+      await this.put(`${this.prefix}${VOD_PLAYLIST}`, vodMaster, 'application/vnd.apple.mpegurl', 'public, max-age=5', this.abortCtl.signal);
+    }
     this.publishedSignature = signature; // only after the write succeeded
     this.log.info({ variants: signature }, 'master playlist published');
     await this.onReady({ variants: ready, observed: { ...this.observed } });

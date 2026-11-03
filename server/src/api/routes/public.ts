@@ -5,6 +5,8 @@ import { notFound } from '../../lib/errors.ts';
 import { keys, redis } from '../../lib/redis.ts';
 import { log } from '../../lib/log.ts';
 import { rateLimit } from '../ratelimit.ts';
+import { currentUser } from '../session.ts';
+import { one } from '../../lib/db.ts';
 import { hub } from '../sse.ts';
 import {
   activeBroadcast, channelBySlug, channelPublic, directory, lastBroadcast, liveInfoForChannel,
@@ -27,17 +29,21 @@ async function activeBroadcastIdForSlug(slug: string): Promise<string | null | u
 }
 
 export async function publicRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/streams', async (_req, reply) => {
+  app.get('/api/streams', async (req, reply) => {
+    const { category } = z.object({ category: z.string().trim().min(1).max(40).optional() }).parse(req.query);
     reply.header('cache-control', 'public, max-age=2');
-    return { streams: await directory() };
+    return { streams: await directory({ category }) };
   });
 
   app.get('/api/channels/:slug', async (req) => {
     const { slug } = slugParams.parse(req.params);
     const ch = await channelBySlug(slug);
     if (!ch) throw notFound('Канал не найден');
-    const [live, last] = await Promise.all([liveInfoForChannel(ch.id), lastBroadcast(ch.id)]);
-    return { channel: channelPublic(ch), live, lastBroadcast: last };
+    const [live, last, viewer] = await Promise.all([liveInfoForChannel(ch.id), lastBroadcast(ch.id), currentUser(req)]);
+    const following = viewer
+      ? (await one('SELECT 1 FROM follows WHERE user_id = $1 AND channel_id = $2', [viewer.id, ch.id])) !== null
+      : null;
+    return { channel: channelPublic(ch), live, lastBroadcast: last, viewer: viewer ? { following } : null };
   });
 
   app.get('/api/channels/:slug/events', async (req, reply) => {

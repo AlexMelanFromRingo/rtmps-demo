@@ -132,7 +132,9 @@ export function buildTranscodeArgs(o: TranscodeArgsOptions): string[] {
     '-hls_delete_threshold', '4',
     '-hls_segment_type', 'fmp4',
     '-hls_fmp4_init_filename', `init_${o.initTag}_%v.mp4`,
-    '-hls_flags', 'independent_segments+program_date_time+delete_segments+discont_start',
+    // omit_endlist: stopping ffmpeg (failover, deploy, re-plan) must NOT tell
+    // players the live stream is over.
+    '-hls_flags', 'independent_segments+program_date_time+delete_segments+discont_start+omit_endlist',
     // Epoch-based media sequence: a failed-over transcode continues with
     // higher sequence numbers instead of colliding with cached segments.
     '-hls_start_number_source', 'epoch',

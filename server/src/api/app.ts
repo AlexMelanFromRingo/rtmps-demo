@@ -17,7 +17,8 @@ export async function buildApp() {
   const app = Fastify({
     loggerInstance: log,
     logController: new LogController({ disableRequestLogging: true }),
-    trustProxy: config.api.trustProxy,
+    // Trust exactly N proxy hops (proxy-addr semantics) — not client-supplied X-Forwarded-For.
+    trustProxy: (_address: string, hop: number) => hop < config.api.trustProxyHops,
     bodyLimit: 64 * 1024,
     routerOptions: { caseSensitive: false, ignoreTrailingSlash: true },
   });
@@ -43,7 +44,7 @@ export async function buildApp() {
   app.addHook('onResponse', async (req, reply) => {
     const route = req.routeOptions.url ?? 'unmatched';
     apiMetrics.requests.observe({ method: req.method, route, status: String(reply.statusCode) }, reply.elapsedTime / 1000);
-    if (reply.statusCode >= 500) log.warn({ method: req.method, url: req.url, status: reply.statusCode }, 'request failed');
+    if (reply.statusCode >= 500) log.warn({ method: req.method, route, status: reply.statusCode }, 'request failed');
   });
 
   app.setErrorHandler((err: FastifyError | HttpError | ZodError, req, reply) => {

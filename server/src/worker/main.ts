@@ -10,7 +10,7 @@ import { ensureBucket } from '../lib/s3.ts';
 import { installSignalHandlers, isShuttingDown, onShutdown, sleep } from '../lib/shutdown.ts';
 import { detectEncoder } from './ffmpeg.ts';
 import { metrics, registry } from './metrics.ts';
-import { claimJob, listenForJobs, releaseOrphanedJobs } from './queue.ts';
+import { claimJob, listenForJobs, releaseJob, releaseOrphanedJobs } from './queue.ts';
 import { SegmentReceiver } from './receiver.ts';
 import { runJob } from './runner.ts';
 
@@ -18,7 +18,7 @@ process.env.SERVICE_NAME ??= 'worker';
 installSignalHandlers(30_000);
 
 const stop = new AbortController();
-const running = new Map<Promise<void>, { degraded: boolean }>();
+const running = new Map<Promise<void>, { degraded: boolean; jobId: string }>();
 let wake: (() => void) | null = null;
 const poke = () => { wake?.(); };
 
@@ -80,17 +80,23 @@ async function main(): Promise<void> {
       let job = null;
       const degraded = !canFull;
       try {
-        job = await claimJob(config.worker.id, config.worker.leaseSec, degraded ? config.worker.degradeAfterSec : 0);
+        const runningIds = [...running.values()].map((r) => r.jobId);
+        job = await claimJob(config.worker.id, config.worker.leaseSec, degraded ? config.worker.degradeAfterSec : 0, runningIds);
       } catch (err) {
         log.warn({ err: (err as Error).message }, 'claim failed');
       }
-      if (job && !stop.signal.aborted) {
+      if (job && stop.signal.aborted) {
+        // Claimed while shutting down: hand it straight back.
+        await releaseJob(job.id, job.lease_id, { delaySec: 0, resetAttempts: true }).catch(() => {});
+        break;
+      }
+      if (job) {
         metrics.claims.inc();
         log.info({ job: job.id, broadcast: job.broadcast_id, attempt: job.attempts, degraded }, 'job claimed');
         const p: Promise<void> = runJob(job, { receiver, encoder, isShuttingDown, shutdown: stop.signal, degraded })
           .catch((err: unknown) => log.error({ err }, 'job crashed'))
           .finally(() => { running.delete(p); poke(); });
-        running.set(p, { degraded });
+        running.set(p, { degraded, jobId: job.id });
         continue; // try to fill remaining slots immediately
       }
     }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { JobOutput, fileMeta } from '../../src/worker/output.ts';
+import { JobOutput, fileMeta, withoutSegments } from '../../src/worker/output.ts';
 import { planLadder } from '../../src/worker/ladder.ts';
 import { log } from '../../src/lib/log.ts';
 
@@ -97,4 +97,47 @@ test('fileMeta content types and caching', () => {
   assert.match(fileMeta('seg_1.m4s').cacheControl, /immutable/);
   assert.equal(fileMeta('init_a_720p.mp4').contentType, 'video/mp4');
   assert.equal(fileMeta('thumb.jpg').contentType, 'image/jpeg');
+});
+
+test('a segment that fails to upload is retried, then dropped from the playlist (never referenced)', async () => {
+  const store = new Map<string, string>();
+  let failsLeft = 100; // seg_2 never succeeds
+  const plan = planLadder({ videoCodec: 'H264', width: 1280, height: 720, fps: 30, hasAudio: false }, 'passthrough');
+  const out = new JobOutput({
+    prefix: 'live/b2/', plan, log, settleMs: 10,
+    put: async (key, body) => {
+      if (key.endsWith('seg_2.m4s') && failsLeft-- > 0) throw new Error('S3 503');
+      store.set(key, body.toString());
+    },
+    del: async () => {},
+    onReady: async () => {},
+  });
+  out.onFile({ variant: 'source', file: 'seg_1.m4s', body: Buffer.alloc(10) });
+  out.onFile({ variant: 'source', file: 'seg_2.m4s', body: Buffer.alloc(10) });
+  out.onFile({ variant: 'source', file: 'index.m3u8', body: Buffer.from(playlist(['seg_1.m4s', 'seg_2.m4s'])) });
+  await out.drain(10_000);
+  const pl = store.get('live/b2/source/index.m3u8')!;
+  assert.match(pl, /seg_1\.m4s/);
+  assert.doesNotMatch(pl, /seg_2\.m4s/);
+  assert.equal(out.stats.failures, 1);
+});
+
+test('abort() stops all further writes (fenced worker)', async () => {
+  const { out, events } = harness(true);
+  out.onFile({ variant: '480p', file: 'seg_1.m4s', body: Buffer.alloc(10) });
+  out.onFile({ variant: '480p', file: 'seg_2.m4s', body: Buffer.alloc(10) });
+  out.onFile({ variant: '480p', file: 'index.m3u8', body: Buffer.from(playlist(['seg_1.m4s', 'seg_2.m4s'])) });
+  out.abort();
+  out.onFile({ variant: '480p', file: 'seg_3.m4s', body: Buffer.alloc(10) });
+  await sleep(150);
+  assert.ok(events.length <= 1, `at most the in-flight write completes, got ${events.join(', ')}`);
+  assert.equal(out.stats.pending, 0);
+  assert.equal(out.stats.pendingBytes, 0);
+});
+
+test('withoutSegments removes the EXTINF/PDT block of dropped segments only', () => {
+  const pl = '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:2.0,\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00Z\nseg_1.m4s\n#EXTINF:2.0,\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:02Z\nseg_2.m4s\n';
+  const out = withoutSegments(pl, new Set(['seg_1.m4s']));
+  assert.doesNotMatch(out, /seg_1|00:00:00Z/);
+  assert.match(out, /#EXT-X-MAP.*\n#EXTINF:2\.0,\n#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:02Z\nseg_2\.m4s/);
 });

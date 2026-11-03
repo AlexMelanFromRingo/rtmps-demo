@@ -53,7 +53,10 @@ export const config = {
   api: {
     host: str('API_HOST', '0.0.0.0'),
     port: int('API_PORT', 3000),
-    trustProxy: bool('TRUST_PROXY', true),
+    // Number of reverse-proxy hops in front of the API (the edge = 1). The
+    // client IP is taken from that position of X-Forwarded-For, so clients
+    // cannot spoof it by sending the header themselves.
+    trustProxyHops: int('TRUST_PROXY_HOPS', 1),
     cookieSecure: bool('COOKIE_SECURE', isProduction),
     sessionTtlDays: int('SESSION_TTL_DAYS', 30),
   },

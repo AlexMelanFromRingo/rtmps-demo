@@ -28,6 +28,7 @@ test('abr args: one split, copy for source, aligned keyframes, var_stream_map wi
   assert.match(vsm, /a:0,agroup:aud,name:audio$/);
   assert.equal(after(args, '-hls_segment_type'), 'fmp4');
   assert.equal(after(args, '-hls_start_number_source'), 'epoch');
+  assert.match(after(args, '-hls_flags')!, /omit_endlist/, 'never end the live playlist when ffmpeg stops');
   assert.equal(after(args, '-hls_fmp4_init_filename'), 'init_abc_%v.mp4');
   assert.equal(after(args, '-output_ts_offset'), '12.500');
   assert.equal(after(args, '-hls_segment_filename'), 'http://127.0.0.1:1234/j/tok/%v/seg_%d.m4s');

@@ -5,8 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { config } from '../config.ts';
 import { publishChannelEvent } from '../lib/events.ts';
 import { log as rootLog } from '../lib/log.ts';
-import { objectKeys, putObject, s3 } from '../lib/s3.ts';
-import { DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { redact } from '../lib/redact.ts';
+import { deleteObject, objectKeys, putObject } from '../lib/s3.ts';
 import { buildTranscodeArgs, choosePullUrl, parseProgress, probeSource, type Encoder, type Progress } from './ffmpeg.ts';
 import { parseRungs, planLadder, sourceUpgraded } from './ladder.ts';
 import { JobOutput } from './output.ts';
@@ -93,47 +93,68 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
   let sourceChanged = false;
   let watch: NodeJS.Timeout | undefined;
 
-  // Lease keeper. Fencing: if we cannot renew for a whole lease period we
-  // stop on our own, because another worker may already have taken over.
-  let lastRenewed = Date.now();
+  // Lease keeper + fencing. A lease is renewed every heartbeatSec; the DB
+  // sets its expiry to (renewal start + leaseSec) at the earliest. If we have
+  // not renewed successfully for (leaseSec - heartbeatSec - 1) s we stop on our
+  // own BEFORE the lease can be taken by another worker — also when the
+  // renewal query hangs instead of failing.
+  const fenceMs = Math.max(2000, (config.worker.leaseSec - config.worker.heartbeatSec - 1) * 1000);
+  let lastRenewStart = Date.now();
+  let renewing = false;
+  const fenceOff = (why: string) => {
+    if (leaseLost) return;
+    log.warn({ why }, 'lost the job lease — stopping and discarding pending output');
+    leaseLost = true;
+    output?.abort(); // a fenced worker must not write anything else
+    kill.abort();
+  };
   const hb = setInterval(() => {
-    const stats = {
-      fps: progress.fps, speed: progress.speed, encoder: deps.encoder, renditions: renditionCount, degraded: deps.degraded,
-      uploads: output?.stats.uploads ?? 0, uploadFailures: output?.stats.failures ?? 0,
-      pendingUploads: output?.stats.pending ?? 0, worker: workerId,
-    };
-    heartbeat(job.id, workerId, config.worker.leaseSec, stats).then((owned) => {
-      lastRenewed = Date.now();
-      if (!owned && !leaseLost) {
-        log.info('job no longer owned (finished/cancelled/reassigned) — stopping');
-        leaseLost = true;
-        kill.abort();
-      }
-    }).catch((err: unknown) => {
-      log.warn({ err: (err as Error).message }, 'lease heartbeat failed');
-      if (Date.now() - lastRenewed > config.worker.leaseSec * 1000 && !leaseLost) {
-        log.error('lease expired without renewal — fencing off');
-        leaseLost = true;
-        kill.abort();
-      }
-    });
-    // Stall watchdog: no new media for a long time → restart the transcode.
-    const last = output?.stats.lastSegmentAt;
+    if (!renewing && !leaseLost) {
+      renewing = true;
+      const started = Date.now();
+      const stats = {
+        fps: progress.fps, speed: progress.speed, encoder: deps.encoder, renditions: renditionCount, degraded: deps.degraded,
+        uploads: output?.stats.uploads ?? 0, uploadFailures: output?.stats.failures ?? 0,
+        pendingUploads: output?.stats.pending ?? 0, worker: workerId,
+      };
+      heartbeat(job.id, job.lease_id, config.worker.leaseSec, stats).then((owned) => {
+        if (owned) lastRenewStart = started;
+        else fenceOff('job finished, cancelled or re-claimed');
+      }).catch((err: unknown) => {
+        log.warn({ err: (err as Error).message }, 'lease heartbeat failed');
+      }).finally(() => { renewing = false; });
+    }
+    if (Date.now() - lastRenewStart > fenceMs) fenceOff('could not renew the lease in time');
+
+    if (!output || kill.signal.aborted) return;
+    // Stall watchdog: no new media from ffmpeg for a long time → restart.
     const stallMs = Math.max(20_000, config.worker.segmentSec * 8000);
-    if (output && !kill.signal.aborted && Date.now() - (last ?? jobStarted) > stallMs) {
+    if (Date.now() - (output.stats.lastSegmentAt ?? jobStarted) > stallMs) {
       log.warn({ stallMs }, 'no segments produced — restarting transcode');
+      kill.abort();
+    }
+    // Upload watchdog: object storage stuck or far behind → restart instead of
+    // buffering media in memory until the process dies.
+    const st = output.stats;
+    if (st.pending > 0 && Date.now() - (st.lastUploadAt ?? jobStarted) > 20_000) {
+      log.warn({ pending: st.pending }, 'object storage not accepting uploads — restarting transcode');
+      output.abort();
+      kill.abort();
+    } else if (st.pendingBytes > 256 * 1024 * 1024) {
+      log.warn({ pendingBytes: st.pendingBytes }, 'upload backlog too large — restarting transcode');
+      output.abort();
       kill.abort();
     }
   }, config.worker.heartbeatSec * 1000);
 
   try {
     if (job.attempts > config.control.maxJobAttempts) {
-      await setJobState(job.id, workerId, 'failed', 'too many attempts');
+      await setJobState(job.id, job.lease_id, 'failed', 'too many attempts');
       return;
     }
     const ctx = await loadJobContext(job.id);
     if (!ctx || ctx.broadcast_status === 'ended') {
-      await setJobState(job.id, workerId, 'cancelled');
+      await setJobState(job.id, job.lease_id, 'cancelled');
       return;
     }
 
@@ -151,12 +172,12 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
       prefix: objectKeys.prefix(job.broadcast_id),
       plan,
       log,
-      put: async (key, body, contentType, cacheControl) => {
+      put: async (key, body, contentType, cacheControl, signal) => {
         const t = process.hrtime.bigint();
-        await putObject(key, body, contentType, cacheControl);
+        await putObject(key, body, contentType, cacheControl, signal);
         metrics.uploadSeconds.observe(Number(process.hrtime.bigint() - t) / 1e9);
       },
-      del: async (key) => { await s3.send(new DeleteObjectCommand({ Bucket: config.s3.bucket, Key: key })); },
+      del: (key, signal) => deleteObject(key, signal),
       onReady: async ({ variants, observed }) => {
         await markBroadcastReady(job.broadcast_id, variants, observed);
         await publishChannelEvent(ctx.channel_id, { kind: 'state' });
@@ -201,34 +222,36 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
 
     const result = await runFfmpeg(args, kill.signal, (p) => { progress = p; });
     clearInterval(watch);
-    await output.drain();
+    if (leaseLost) output.abort();
+    else await output.drain();
     log.info({ code: result.code, signal: result.signal, ranSec: Math.round(result.ranMs / 1000) }, 'ffmpeg exited');
     metrics.ffmpegExits.inc({ reason: leaseLost ? 'lease' : deps.isShuttingDown() ? 'shutdown' : 'exit' });
 
     if (leaseLost) return;
     if (sourceChanged) {
-      await releaseJob(job.id, workerId, { delaySec: 0, resetAttempts: true });
+      await releaseJob(job.id, job.lease_id, { delaySec: 0, resetAttempts: true });
       return;
     }
     // Source ended or ffmpeg failed: hand back to the queue. If the stream
     // really went offline the control plane marks the job finished; otherwise
     // the next attempt (maybe on another worker) resumes the broadcast.
     const ranLong = result.ranMs > 60_000;
-    await releaseJob(job.id, workerId, {
+    await releaseJob(job.id, job.lease_id, {
       delaySec: deps.isShuttingDown() ? 0 : ranLong ? 1 : backoffSec(job.attempts),
-      error: result.code === 0 ? undefined : result.stderrTail.slice(-1000),
+      error: result.code === 0 ? undefined : redact(result.stderrTail).slice(-1000),
       resetAttempts: ranLong || deps.isShuttingDown(),
     });
   } catch (err) {
-    const message = (err as Error).message;
+    const message = redact((err as Error).message);
     log.warn({ err: message }, 'job attempt failed');
     if (!leaseLost) {
-      await releaseJob(job.id, workerId, { delaySec: backoffSec(job.attempts), error: message.slice(-1000), resetAttempts: false })
+      await releaseJob(job.id, job.lease_id, { delaySec: backoffSec(job.attempts), error: message.slice(-1000), resetAttempts: false })
         .catch((e: unknown) => log.error({ err: (e as Error).message }, 'release failed'));
     }
   } finally {
     clearInterval(hb);
     clearInterval(watch);
+    output?.abort();
     deps.shutdown.removeEventListener('abort', onShutdown);
     if (token) deps.receiver.unregister(token);
     metrics.activeJobs.dec();

@@ -3,7 +3,7 @@
 // converge even if hooks are lost, ingest nodes die or workers crash.
 import pg from 'pg';
 import { config } from '../config.ts';
-import { query } from '../lib/db.ts';
+import { connectionOptions, query } from '../lib/db.ts';
 import { publishChannelEvent } from '../lib/events.ts';
 import { log } from '../lib/log.ts';
 import { keys, redis } from '../lib/redis.ts';
@@ -22,6 +22,8 @@ export type MtxPath = {
   tracks2?: { codec: string; codecProps?: { width?: number; height?: number } }[];
   inboundBytes?: number;
   bytesReceived?: number;
+  readyTime?: string;
+  onlineTime?: string;
 };
 
 export async function fetchPaths(apiUrl: string, timeoutMs = 2000): Promise<MtxPath[]> {
@@ -48,8 +50,19 @@ export function codecsFromTracks(tracks: MtxPath['tracks2']) {
   };
 }
 
+/** The most recently started source among duplicates of one path. */
+function newest(seen: SeenSource[]): SeenSource | undefined {
+  const t = (s: SeenSource) => Date.parse(s.item.onlineTime ?? s.item.readyTime ?? '') || 0;
+  return [...seen].sort((a, b) => t(b) - t(a))[0];
+}
+
 // ── loop ────────────────────────────────────────────────────────────────────
-type ActiveRow = { id: string; channel_id: string; status: string; source_id: string | null; ingest_node: string | null; stream_key: string; ingest_kbps: number | null };
+type ActiveRow = {
+  id: string; channel_id: string; status: string; source_id: string | null; ingest_node: string | null;
+  ingest_path: string | null; ingest_kbps: number | null;
+};
+
+type SeenSource = { node: string; item: MtxPath };
 
 export class ControlLoop {
   private readonly bytes = new Map<string, { bytes: number; at: number }>();
@@ -81,61 +94,70 @@ export class ControlLoop {
     // Snapshot broadcasts BEFORE querying nodes: anything that goes live in
     // between is simply not judged this round (prevents false "offline").
     const active = await query<ActiveRow>(`
-      SELECT b.id, b.channel_id::text, b.status, b.source_id, b.ingest_node, b.ingest_kbps, c.stream_key
-        FROM broadcasts b JOIN channels c ON c.id = b.channel_id WHERE b.status <> 'ended'`);
+      SELECT id, channel_id::text, status, source_id, ingest_node, ingest_path, ingest_kbps
+        FROM broadcasts WHERE status <> 'ended'`);
     const nodes = await query<IngestNode>(`SELECT * FROM ingest_nodes WHERE last_seen_at > now() - interval '10 minutes'`);
-    const byKey = new Map(active.map((b) => [b.stream_key, b]));
-    const knownNodes = new Set(nodes.map((n) => n.id));
 
+    // Phase 1: observe every node.
+    const responded = new Set<string>();
+    const dead = new Set<string>();
+    const byPath = new Map<string, SeenSource[]>();
     await Promise.all(nodes.map(async (node) => {
-      let paths: MtxPath[] | null = null;
       try {
-        paths = await fetchPaths(node.api_url);
+        const paths = await fetchPaths(node.api_url);
         this.nodeFailures.delete(node.id);
+        responded.add(node.id);
+        for (const p of paths) {
+          if (!streamKeyFromPath(p.name) || !p.source || !(p.online ?? p.ready)) continue;
+          const list = byPath.get(p.name) ?? [];
+          list.push({ node: node.id, item: p });
+          byPath.set(p.name, list);
+        }
       } catch (err) {
         const n = (this.nodeFailures.get(node.id) ?? 0) + 1;
         this.nodeFailures.set(node.id, n);
         if (n === 1 || n % 10 === 0) log.warn({ node: node.id, err: (err as Error).message, failures: n }, 'ingest node unreachable');
-      }
-
-      if (paths === null) {
         const silentFor = Date.now() - new Date(node.last_seen_at).getTime();
-        const dead = silentFor > config.control.ingestNodeTimeoutSec * 1000 || (this.nodeFailures.get(node.id) ?? 0) >= 8;
-        if (!dead) return;
-        for (const b of active) {
-          if (b.ingest_node === node.id && b.status === 'live' && b.source_id) {
-            log.warn({ node: node.id, broadcast: b.id }, 'ingest node presumed dead — marking stream offline');
-            await handleOffline({ node: node.id, path: `live/${b.stream_key}`, sourceId: b.source_id });
-          }
-        }
-        return;
-      }
-
-      const seen = new Set<string>();
-      for (const p of paths) {
-        const key = streamKeyFromPath(p.name);
-        if (!key || !p.source || !(p.online ?? p.ready)) continue;
-        seen.add(key);
-        const b = byKey.get(key);
-        if (!b || b.status !== 'live' || b.source_id !== p.source.id) {
-          // Missed (or not yet processed) online hook, reconnect or takeover.
-          await handleOnline({ node: node.id, path: p.name, sourceType: p.source.type, sourceId: p.source.id }, codecsFromTracks(p.tracks2));
-          continue;
-        }
-        await this.updateIngestBitrate(b, p.inboundBytes ?? p.bytesReceived ?? 0);
-      }
-      for (const b of active) {
-        if (b.ingest_node === node.id && b.status === 'live' && b.source_id && !seen.has(b.stream_key)) {
-          await handleOffline({ node: node.id, path: `live/${b.stream_key}`, sourceId: b.source_id });
-        }
+        if (silentFor > config.control.ingestNodeTimeoutSec * 1000 || n >= 8) dead.add(node.id);
       }
     }));
+    const knownNodes = new Set(nodes.map((n) => n.id));
 
-    // Broadcasts attached to nodes that no longer exist at all.
+    // Phase 2: decide per broadcast. The current source keeps the broadcast as
+    // long as ANY node still reports it — a stale duplicate on another node
+    // (OBS reconnected elsewhere, two encoders on one key) never causes
+    // flapping; the hooks deliver genuine takeovers.
+    const handled = new Set<string>();
     for (const b of active) {
-      if (b.status === 'live' && b.ingest_node && b.source_id && !knownNodes.has(b.ingest_node)) {
-        await handleOffline({ node: b.ingest_node, path: `live/${b.stream_key}`, sourceId: b.source_id });
+      if (b.status !== 'live' || !b.ingest_path || !b.source_id) continue;
+      handled.add(b.ingest_path);
+      const seen = byPath.get(b.ingest_path) ?? [];
+      const current = seen.find((s) => s.item.source?.id === b.source_id);
+      if (current) {
+        await this.updateIngestBitrate(b, current.item.inboundBytes ?? current.item.bytesReceived ?? 0);
+        continue;
       }
+      const nodeGone = !b.ingest_node || !knownNodes.has(b.ingest_node) || dead.has(b.ingest_node);
+      const nodeSaysGone = !!b.ingest_node && responded.has(b.ingest_node);
+      if (!nodeGone && !nodeSaysGone) continue; // node unreachable but not yet dead: don't judge
+      const replacement = newest(seen);
+      if (replacement) {
+        // Current source vanished, another node has the same path: take it over.
+        await handleOnline({ node: replacement.node, path: b.ingest_path, sourceType: replacement.item.source!.type, sourceId: replacement.item.source!.id },
+          codecsFromTracks(replacement.item.tracks2));
+      } else {
+        if (nodeGone && !nodeSaysGone) log.warn({ node: b.ingest_node, broadcast: b.id }, 'ingest node presumed dead — marking stream offline');
+        await handleOffline({ node: b.ingest_node ?? 'unknown', path: b.ingest_path, sourceId: b.source_id });
+      }
+    }
+
+    // Paths that are online but not attached to a live broadcast: missed
+    // online hook, or a reconnect during the grace period.
+    for (const [path, seen] of byPath) {
+      if (handled.has(path)) continue;
+      const pick = newest(seen)!;
+      await handleOnline({ node: pick.node, path, sourceType: pick.item.source!.type, sourceId: pick.item.source!.id },
+        codecsFromTracks(pick.item.tracks2));
     }
   }
 
@@ -232,7 +254,10 @@ const LEADER_LOCK = 7_200_002;
 export async function runControlLoopWhenLeader(signal: AbortSignal): Promise<void> {
   const loop = new ControlLoop();
   while (!signal.aborted) {
-    const client = new pg.Client({ connectionString: config.databaseUrl, application_name: 'streamhub-leader' });
+    // Keepalives on both ends + query timeout: if this host dies or is
+    // partitioned, Postgres drops the session (releasing the advisory lock)
+    // within seconds and another replica takes over.
+    const client = new pg.Client({ ...connectionOptions, application_name: 'streamhub-leader' });
     let lost = false;
     client.on('error', (err) => { lost = true; log.warn({ err: err.message }, 'leader connection error'); });
     try {

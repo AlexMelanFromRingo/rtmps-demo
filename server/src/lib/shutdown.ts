@@ -34,8 +34,11 @@ export function installSignalHandlers(timeoutMs = 20_000): void {
   process.on('SIGINT', () => void run('SIGINT'));
 }
 
+/** Resolves after ms, or early when signal aborts. Leaves no listener behind. */
 export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+    if (signal?.aborted) return resolve();
+    const onAbort = () => { clearTimeout(t); resolve(); };
+    const t = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });

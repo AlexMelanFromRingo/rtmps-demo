@@ -169,9 +169,12 @@ CORS разрешён для любых origin. Кодек выбирается 
 
 | Метод | Путь | Кто вызывает |
 |---|---|---|
-| `POST` | `/internal/mediamtx/auth?secret=…` | MediaMTX (authMethod: http) |
-| `POST` | `/internal/ingest/heartbeat?secret=…` | ingest-узлы, регистрация каждые 5 с |
-| `POST` | `/internal/ingest/online?secret=…` | хук `runOnOnline` |
-| `POST` | `/internal/ingest/offline?secret=…` | хук `runOnOffline` |
+| `POST` | `/internal/mediamtx/auth` | MediaMTX (authMethod: http) |
+| `POST` | `/internal/ingest/heartbeat` | ingest-узлы, регистрация каждые 5 с |
+| `POST` | `/internal/ingest/online` | хук `runOnOnline` |
+| `POST` | `/internal/ingest/offline` | хук `runOnOffline` |
+
+`/internal/*` требуют `Authorization: Bearer <INTERNAL_SECRET>` (или Basic с секретом в
+качестве пароля — так его передаёт MediaMTX из URL `http://mediamtx:<secret>@api/...`).
 | `GET` | `/healthz`, `/readyz` | оркестратор |
 | `GET` | `/metrics` | Prometheus |

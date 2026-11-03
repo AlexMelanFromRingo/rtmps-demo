@@ -49,9 +49,11 @@ export class ChannelEventHub {
     if (!set) this.subs.set(channelId, (set = new Set()));
     set.add(res);
     apiMetrics.sseClients.inc();
-    const state = this.cache.get(channelId) ?? await loadState(channelId);
-    this.cache.set(channelId, state);
-    this.write(res, state);
+    const loaded = this.cache.get(channelId) ?? await loadState(channelId);
+    if (!this.subs.get(channelId)?.has(res)) return; // client left while we were loading
+    // A reload that finished meanwhile is fresher than what we loaded.
+    if (!this.cache.has(channelId)) this.cache.set(channelId, loaded);
+    this.write(res, this.cache.get(channelId)!);
   }
 
   remove(channelId: string, res: ServerResponse): void {

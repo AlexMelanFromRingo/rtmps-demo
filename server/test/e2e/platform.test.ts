@@ -186,6 +186,16 @@ describe('accounts & security', () => {
     assert.equal((await c.get('/api/dashboard')).status, 401);
   });
 
+  test('a forged X-Forwarded-For is neither trusted nor able to break requests', async () => {
+    const c = new Client();
+    const r = await c.req('POST', '/api/auth/register', { username: `xff_${SUFFIX}`, password: 'pw-is-long-enough' },
+      { 'x-forwarded-for': 'not-an-ip' });
+    assert.equal(r.status, 201, JSON.stringify(r.json));
+    const bad = await c.req('POST', '/api/auth/login', { username: `xff_${SUFFIX}`, password: 'wrong-password' },
+      { 'x-forwarded-for': '203.0.113.7' });
+    assert.equal(bad.status, 401);
+  });
+
   test('internal endpoints are not reachable through the edge', async () => {
     const r = await fetch(`${BASE}/internal/ingest/online`, { method: 'POST' });
     assert.equal(r.status, 404);
@@ -323,6 +333,18 @@ describe('ingest × codec matrix (multiple channels live at once)', () => {
     await waitFor('reconnecting', async () => (await r.client.get('/api/dashboard')).json.live?.status === 'reconnecting', 50_000);
   });
 
+  test('stream key reset during a live broadcast keeps it live', async () => {
+    const { client } = running.get('rtmp-hevc')!;
+    const before = (await client.get('/api/dashboard')).json as Dashboard;
+    assert.equal(before.live?.status, 'live');
+    assert.equal((await client.post('/api/channel/stream-key')).status, 200);
+    await sleep(10_000); // several reconciler ticks
+    const after = (await client.get('/api/dashboard')).json as Dashboard;
+    assert.equal(after.live?.status, 'live', 'running broadcast must survive the key reset');
+    assert.equal(after.live?.broadcastId, before.live!.broadcastId);
+    assert.equal(after.live?.stats.transcoder?.state, 'running');
+  });
+
   test('stream key reset: the old key is rejected', async () => {
     const s = await newStreamer('rotate');
     const r = await s.client.post('/api/channel/stream-key');
@@ -351,13 +373,16 @@ describe('ingest × codec matrix (multiple channels live at once)', () => {
 
     docker(['kill', container]);
     const killedAt = Date.now();
+    let sawEndlist = false;
     try {
       await waitFor('failover', async () => {
+        if ((await (await fetch(variantUrl)).text()).includes('#EXT-X-ENDLIST')) sawEndlist = true;
         const d = (await client.get('/api/dashboard')).json as Dashboard;
         const t = d.live?.stats.transcoder;
         return t?.state === 'running' && t.worker !== worker && (await lastSeg()) > segBefore + 3;
       }, 60_000);
       console.log(`  failover completed in ${((Date.now() - killedAt) / 1000).toFixed(1)} s`);
+      assert.equal(sawEndlist, false, 'a live playlist must never announce the end of the stream');
     } finally {
       docker(['start', container]);
     }

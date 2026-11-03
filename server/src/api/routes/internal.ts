@@ -4,14 +4,16 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { config } from '../../config.ts';
 import { safeEqual } from '../../lib/crypto.ts';
+import { internalSecretFrom } from '../../lib/internalAuth.ts';
 import { HttpError } from '../../lib/errors.ts';
 import { log } from '../../lib/log.ts';
 import { authorizeIngest, handleOffline, handleOnline, registerNode, type AuthRequest } from '../../control/broadcasts.ts';
 import { apiMetrics } from '../metrics.ts';
 
 function checkSecret(req: FastifyRequest): void {
-  const secret = (req.query as { secret?: string }).secret ?? '';
-  if (!safeEqual(secret, config.internalSecret)) throw new HttpError(403, 'forbidden', 'bad internal secret');
+  if (!safeEqual(internalSecretFrom(req.headers.authorization), config.internalSecret)) {
+    throw new HttpError(403, 'forbidden', 'bad internal secret');
+  }
 }
 
 const nodeId = z.string().regex(/^[A-Za-z0-9_.:-]{1,100}$/);

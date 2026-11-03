@@ -1,5 +1,6 @@
 // Cookie sessions: opaque random token in an HttpOnly cookie; Postgres stores
 // only its SHA-256, so a DB leak does not leak live sessions.
+import { isIP } from 'node:net';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.ts';
 import { newSessionToken, sha256 } from '../lib/crypto.ts';
@@ -15,7 +16,7 @@ export async function createSession(reply: FastifyReply, req: FastifyRequest, us
   const ttl = config.api.sessionTtlDays;
   await query(`INSERT INTO auth_sessions (token_hash, user_id, expires_at, user_agent, ip)
                VALUES ($1, $2, now() + make_interval(days => $3), $4, $5)`,
-  [sha256(token), userId, ttl, (req.headers['user-agent'] ?? '').slice(0, 300), req.ip]);
+  [sha256(token), userId, ttl, (req.headers['user-agent'] ?? '').slice(0, 300), isIP(req.ip) ? req.ip : null]);
   reply.setCookie(COOKIE, token, {
     path: '/', httpOnly: true, sameSite: 'lax', secure: config.api.cookieSecure, maxAge: ttl * 86400,
   });

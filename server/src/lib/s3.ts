@@ -1,5 +1,5 @@
 import {
-  CreateBucketCommand, DeleteObjectsCommand, HeadBucketCommand, ListObjectsV2Command,
+  CreateBucketCommand, DeleteObjectCommand, DeleteObjectsCommand, HeadBucketCommand, ListObjectsV2Command,
   PutBucketPolicyCommand, PutObjectCommand, S3Client,
 } from '@aws-sdk/client-s3';
 import { config } from '../config.ts';
@@ -17,6 +17,8 @@ export const s3 = new S3Client({
   requestChecksumCalculation: 'WHEN_REQUIRED',
   responseChecksumValidation: 'WHEN_REQUIRED',
   maxAttempts: 3,
+  // Never wait forever on a stuck connection (uploads queue up behind it).
+  requestHandler: { connectionTimeout: 2_000, requestTimeout: 10_000 },
 });
 
 const bucket = config.s3.bucket;
@@ -45,10 +47,14 @@ export async function ensureBucket(): Promise<void> {
   }
 }
 
-export async function putObject(key: string, body: Buffer | string, contentType: string, cacheControl: string): Promise<void> {
+export async function putObject(key: string, body: Buffer | string, contentType: string, cacheControl: string, abortSignal?: AbortSignal): Promise<void> {
   await s3.send(new PutObjectCommand({
     Bucket: bucket, Key: key, Body: body, ContentType: contentType, CacheControl: cacheControl,
-  }));
+  }), abortSignal ? { abortSignal } : {});
+}
+
+export async function deleteObject(key: string, abortSignal?: AbortSignal): Promise<void> {
+  await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), abortSignal ? { abortSignal } : {});
 }
 
 export async function deletePrefix(prefix: string): Promise<number> {

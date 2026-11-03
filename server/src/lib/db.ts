@@ -4,11 +4,24 @@ import { log } from './log.ts';
 
 // BIGINT ids are returned as strings by default (safe: they are serialised
 // as strings in the API anyway). Make COUNT()/int8 aggregates explicit in SQL.
-export const pool = new pg.Pool({
+// Every connection gets bounded queries and TCP keepalives on both ends, so
+// a dead network path fails fast instead of hanging (lease fencing and leader
+// election depend on noticing that quickly).
+export const connectionOptions = {
   connectionString: config.databaseUrl,
+  connectionTimeoutMillis: 5_000,
+  query_timeout: 15_000,
+  statement_timeout: 15_000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 5_000,
+  // Server-side keepalive: Postgres drops (and releases advisory locks of) dead clients in ~11 s.
+  options: '-c tcp_keepalives_idle=5 -c tcp_keepalives_interval=2 -c tcp_keepalives_count=3',
+} satisfies pg.ClientConfig;
+
+export const pool = new pg.Pool({
+  ...connectionOptions,
   max: config.databasePoolMax,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
   application_name: process.env.SERVICE_NAME ?? 'streamhub',
 });
 

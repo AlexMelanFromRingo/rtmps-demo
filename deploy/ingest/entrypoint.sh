@@ -12,16 +12,21 @@ NODE_IP="$(hostname -i | awk '{print $1}')"
 : "${NODE_SRT_URL:=srt://${NODE_IP}:8890}"
 export NODE_ID CONTROL_URL INTERNAL_SECRET
 
-# Every publish/read is authorised by the control plane.
-export MTX_AUTHHTTPADDRESS="${CONTROL_URL}/internal/mediamtx/auth?secret=${INTERNAL_SECRET}"
+# Every publish/read is authorised by the control plane. The secret travels as
+# URL userinfo, which Go's HTTP client sends as a Basic Authorization header
+# (never in the request line / access logs).
+CONTROL_SCHEME="${CONTROL_URL%%://*}"
+CONTROL_HOSTPATH="${CONTROL_URL#*://}"
+export MTX_AUTHHTTPADDRESS="${CONTROL_SCHEME}://mediamtx:${INTERNAL_SECRET}@${CONTROL_HOSTPATH}/internal/mediamtx/auth"
 
 # Self-registration heartbeat: lets the control plane discover, reconcile and
 # detect the death of ingest nodes without static configuration.
 (
   while true; do
     curl -fsS -m 3 -o /dev/null -X POST -H 'content-type: application/json' \
+      -H "Authorization: Bearer ${INTERNAL_SECRET}" \
       -d "{\"node\":\"${NODE_ID}\",\"apiUrl\":\"${NODE_API_URL}\",\"rtspUrl\":\"${NODE_RTSP_URL}\",\"srtUrl\":\"${NODE_SRT_URL}\"}" \
-      "${CONTROL_URL}/internal/ingest/heartbeat?secret=${INTERNAL_SECRET}" \
+      "${CONTROL_URL}/internal/ingest/heartbeat" \
       || echo "[ingest] heartbeat to control plane failed" >&2
     sleep 5
   done

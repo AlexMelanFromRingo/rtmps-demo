@@ -240,10 +240,11 @@ describe('ingest × codec matrix (multiple channels live at once)', () => {
     },
     {
       name: 'srt-hevc', protocol: 'srt', network: 'host',
-      args: (key: string) => [...SOURCE(1920, 1080, 30), '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'log-level=error',
+      // 720p keeps 7 concurrent software encoders real-time on a 4-core CI runner.
+      args: (key: string) => [...SOURCE(1280, 720, 30), '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'log-level=error',
         '-g', '60', '-pix_fmt', 'yuv420p', '-c:a', 'aac', ...DURATION, '-f', 'mpegts',
         `srt://${INGEST}:8890?streamid=publish:live/${key}&pkt_size=1316`],
-      codecs: [/hvc1\..*NAME="source"/, /avc1\./], ladder: [/NAME="1080p"/, /NAME="720p"/],
+      codecs: [/hvc1\..*NAME="source"/, /avc1\./], ladder: [/NAME="720p"/, /NAME="480p"/],
       expect: { video: 'H265', source: 'H265' },
     },
     {
@@ -388,8 +389,12 @@ describe('ingest × codec matrix (multiple channels live at once)', () => {
     // Free transcoding capacity first (N+1 headroom is how failover is planned).
     for (const [name, r] of running) if (name !== 'rtmp-h264') stopPublisher(r.container);
     const { client } = running.get('rtmp-h264')!;
-    await sleep(3000);
-    const before = (await client.get('/api/dashboard')).json as Dashboard;
+    // The transcode must actually be running on a worker (on a small box it may
+    // still be queued right after the other streams were stopped).
+    const before = await waitFor('transcode running on a worker', async () => {
+      const d = (await client.get('/api/dashboard')).json as Dashboard;
+      return d.live?.stats.transcoder?.state === 'running' && d.live.stats.transcoder.worker ? d : null;
+    }, 90_000, 2000);
     const worker = before.live!.stats.transcoder!.worker!;
     const container = worker.replace(/-\d+$/, ''); // worker id = <container hostname>-<pid>
     const variantUrl = new URL(before.live!.playbackUrl!.replace('master.m3u8', 'source/index.m3u8'), HLS_ORIGIN);

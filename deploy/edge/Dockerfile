@@ -1,6 +1,6 @@
 # Edge = nginx serving the SPA, load-balancing the API and caching HLS.
 # Build context: repository root.
-FROM node:24-trixie-slim AS web
+FROM node:26-trixie-slim AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund

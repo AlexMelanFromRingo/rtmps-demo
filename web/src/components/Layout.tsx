@@ -1,20 +1,53 @@
-import { LogOut, Radio, UserRound } from 'lucide-react';
-import { Link, NavLink, Outlet, ScrollRestoration, useNavigate } from 'react-router';
+import { Menu, Radio } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { Link, NavLink, Outlet, ScrollRestoration, useLocation } from 'react-router';
 import { useAuth } from '../lib/auth';
+import { readPref, writePref } from '../lib/browser';
+import { FollowingProvider, useFollowing } from '../lib/following';
+import { useMediaQuery } from '../lib/hooks';
+import { FollowRail } from './FollowRail';
+import { HeaderSearch } from './header/HeaderSearch';
+import { UserMenu } from './header/UserMenu';
+import { NavDrawer } from './NavDrawer';
 import './Layout.css';
+
+/** Work-focused pages get the full width: no follow rail there. */
+const NO_RAIL = /^\/(dashboard|settings)(\/|$)/;
 
 export function Layout() {
   return (
-    <>
+    <FollowingProvider>
       <a className="skip-link" href="#main">
         Перейти к содержимому
       </a>
       <Header />
+      <Shell />
+      <ScrollRestoration />
+    </FollowingProvider>
+  );
+}
+
+function Shell() {
+  const { enabled } = useFollowing();
+  const location = useLocation();
+  const wide = useMediaQuery('(min-width: 1200px)');
+  const [collapsed, setCollapsed] = useState(() => readPref('rail') === 'collapsed');
+  const showRail = enabled && wide && !NO_RAIL.test(location.pathname);
+
+  const toggle = () => {
+    setCollapsed((c) => {
+      writePref('rail', c ? 'open' : 'collapsed');
+      return !c;
+    });
+  };
+
+  return (
+    <div className="shell" data-rail={showRail ? (collapsed ? 'collapsed' : 'open') : 'none'}>
+      {showRail ? <FollowRail collapsed={collapsed} onToggle={toggle} /> : null}
       <main id="main" tabIndex={-1}>
         <Outlet />
       </main>
-      <ScrollRestoration />
-    </>
+    </div>
   );
 }
 
@@ -30,24 +63,40 @@ function Wordmark() {
 }
 
 function Header() {
-  const { auth, logout } = useAuth();
-  const navigate = useNavigate();
-
-  const onLogout = async () => {
-    // Leave protected pages first so they don't bounce to /login on the auth change.
-    await navigate('/');
-    await logout();
-  };
+  const { auth } = useAuth();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
   return (
-    <header className="header">
+    <>
+    <header className="header" data-search-open={searchOpen ? 'true' : 'false'}>
       <div className="header__inner">
+        <button
+          type="button"
+          className="btn btn--ghost btn--icon header__menu"
+          aria-label="Меню"
+          aria-haspopup="dialog"
+          aria-expanded={drawerOpen}
+          onClick={() => setDrawerOpen(true)}
+        >
+          <Menu aria-hidden="true" />
+        </button>
         <Wordmark />
         <nav className="header__nav" aria-label="Основная навигация">
           <NavLink to="/" end className="header__link">
             Каталог
           </NavLink>
+          <NavLink to="/directory" className="header__link">
+            Категории
+          </NavLink>
+          {auth.status === 'authed' ? (
+            <NavLink to="/following" className="header__link">
+              Отслеживаемые
+            </NavLink>
+          ) : null}
         </nav>
+        <HeaderSearch onExpandedChange={setSearchOpen} />
         <div className="header__actions">
           {auth.status === 'authed' ? (
             <>
@@ -55,29 +104,13 @@ function Header() {
                 <span className="btn__dot" aria-hidden="true" />
                 <span>Студия</span>
               </NavLink>
-              <Link
-                to={`/${auth.channel.slug}`}
-                className="header__user"
-                title="Страница вашего канала"
-              >
-                <UserRound aria-hidden="true" />
-                <span className="header__user-name">{auth.user.displayName}</span>
-              </Link>
-              <button
-                type="button"
-                className="btn btn--ghost btn--icon"
-                onClick={() => void onLogout()}
-                aria-label="Выйти"
-                title="Выйти"
-              >
-                <LogOut aria-hidden="true" />
-              </button>
+              <UserMenu user={auth.user} channel={auth.channel} />
             </>
           ) : auth.status === 'loading' ? (
             <span className="header__placeholder" aria-hidden="true" />
           ) : (
             <>
-              <NavLink to="/login" className="btn btn--ghost">
+              <NavLink to="/login" className="btn btn--ghost header__login">
                 Войти
               </NavLink>
               <NavLink to="/signup" className="btn btn--onair header__cta">
@@ -89,5 +122,8 @@ function Header() {
         </div>
       </div>
     </header>
+    {/* Outside the header: its backdrop-filter would otherwise contain fixed descendants. */}
+    <NavDrawer open={drawerOpen} onClose={closeDrawer} />
+    </>
   );
 }

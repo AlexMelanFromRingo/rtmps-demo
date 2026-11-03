@@ -1,7 +1,7 @@
-import { CircleAlert, Eye, EyeOff, TriangleAlert } from 'lucide-react';
-import { useId, useRef, useState, type FormEvent } from 'react';
+import { ArrowLeft, CircleAlert, Eye, EyeOff, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
-import { ApiError, api, errorMessage } from '../api/client';
+import { ApiError, ErrorCodes, api, errorMessage } from '../api/client';
 import { useAuth } from '../lib/auth';
 import { useDocumentTitle } from '../lib/hooks';
 import './AuthPage.css';
@@ -50,6 +50,8 @@ export function AuthPage({ mode }: { mode: Mode }) {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  /** Second sign-in step: the account has two-factor authentication. */
+  const [needsTotp, setNeedsTotp] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const ids = { username: useId(), password: useId(), displayName: useId(), error: useId() };
 
@@ -101,8 +103,12 @@ export function AuthPage({ mode }: { mode: Mode }) {
           formRef.current?.querySelector<HTMLInputElement>('[name="username"]')?.focus();
           return;
         }
-        if (err.code === 'invalid_credentials') {
+        if (err.code === ErrorCodes.invalidCredentials) {
           setFormError('Неверное имя пользователя или пароль.');
+          return;
+        }
+        if (err.code === ErrorCodes.totpRequired) {
+          setNeedsTotp(true);
           return;
         }
       }
@@ -123,6 +129,24 @@ export function AuthPage({ mode }: { mode: Mode }) {
     undefined;
 
   const channelPreview = `${window.location.host}/${values.username || 'имя'}`;
+
+  if (!isSignup && needsTotp) {
+    return (
+      <TotpStep
+        username={values.username.trim()}
+        password={values.password}
+        onBack={(message) => {
+          setNeedsTotp(false);
+          setFormError(message);
+        }}
+        onDone={async () => {
+          setSubmitting(true);
+          await refresh();
+          navigate(next, { replace: true });
+        }}
+      />
+    );
+  }
 
   return (
     <div className="page auth">
@@ -249,6 +273,162 @@ export function AuthPage({ mode }: { mode: Mode }) {
             </>
           )}
         </p>
+      </div>
+    </div>
+  );
+}
+
+type TotpProps = {
+  username: string;
+  password: string;
+  /** Back to the password step, optionally with a message for it. */
+  onBack: (message: string | null) => void;
+  onDone: () => Promise<void>;
+};
+
+const TOTP_RE = /^\d{6}$/;
+
+/** Sign-in step 2: a 6-digit code from the authenticator app, or a one-time recovery code. */
+function TotpStep({ username, password, onBack, onDone }: TotpProps) {
+  const [recovery, setRecovery] = useState(false);
+  const [code, setCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const headRef = useRef<HTMLHeadingElement>(null);
+  const ids = { code: useId(), hint: useId(), err: useId() };
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, [recovery]);
+
+  const normalized = recovery ? code.trim() : code.replace(/\s+/g, '');
+
+  const submit = async (value: string) => {
+    if (busy) return;
+    if (!recovery && !TOTP_RE.test(value)) {
+      setError('Введите 6 цифр из приложения.');
+      inputRef.current?.focus();
+      return;
+    }
+    if (recovery && value.length < 4) {
+      setError('Введите резервный код целиком.');
+      inputRef.current?.focus();
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.login({ username, password, totp: value });
+      await onDone();
+    } catch (err) {
+      setBusy(false);
+      if (err instanceof ApiError) {
+        if (err.code === ErrorCodes.totpInvalid) {
+          setError(
+            recovery
+              ? 'Резервный код не подошёл. Каждый код срабатывает только один раз.'
+              : 'Код не подошёл. Проверьте, что время на телефоне выставлено автоматически, и введите новый код.',
+          );
+          setCode('');
+          inputRef.current?.focus();
+          return;
+        }
+        if (err.code === ErrorCodes.invalidCredentials) {
+          onBack('Неверное имя пользователя или пароль.');
+          return;
+        }
+      }
+      setError(errorMessage(err));
+    }
+  };
+
+  return (
+    <div className="page auth">
+      <div className="auth__card">
+        <span className="auth__badge" aria-hidden="true">
+          <ShieldCheck />
+        </span>
+        <h1 className="h-page" ref={headRef}>
+          Подтвердите вход
+        </h1>
+        <p className="auth__lede muted">
+          {recovery
+            ? 'Введите один из резервных кодов, которые вы сохранили при включении защиты.'
+            : 'Откройте приложение-аутентификатор и введите код для StreamHub.'}
+        </p>
+
+        <form
+          className="auth__form"
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit(normalized);
+          }}
+        >
+          <div className="field">
+            <label className="field__label" htmlFor={ids.code}>
+              {recovery ? 'Резервный код' : 'Код из приложения'}
+            </label>
+            <input
+              ref={inputRef}
+              key={recovery ? 'recovery' : 'totp'}
+              id={ids.code}
+              name="totp"
+              className={`input${recovery ? '' : ' auth__code'}`}
+              value={code}
+              onChange={(e) => {
+                const v = recovery ? e.target.value : e.target.value.replace(/\D+/g, '').slice(0, 6);
+                setCode(v);
+                if (error) setError(null);
+                // Six digits is a complete code: submit right away.
+                if (!recovery && v.length === 6) void submit(v);
+              }}
+              inputMode={recovery ? 'text' : 'numeric'}
+              autoComplete={recovery ? 'off' : 'one-time-code'}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              maxLength={recovery ? 32 : 6}
+              placeholder={recovery ? 'xxxx-xxxx' : '000000'}
+              aria-invalid={error ? true : undefined}
+              aria-describedby={[ids.hint, error ? ids.err : ''].filter(Boolean).join(' ')}
+              disabled={busy}
+            />
+            <p className="field__hint" id={ids.hint}>
+              {recovery ? 'Код можно ввести с дефисом или без.' : 'Код обновляется каждые 30 секунд.'}
+            </p>
+            {error ? (
+              <p className="field__error" id={ids.err} role="alert">
+                <CircleAlert aria-hidden="true" />
+                {error}
+              </p>
+            ) : null}
+          </div>
+
+          <button type="submit" className="btn btn--primary btn--block auth__submit" disabled={busy}>
+            {busy ? <span className="spinner spinner--sm" aria-hidden="true" /> : null}
+            Подтвердить
+          </button>
+        </form>
+
+        <div className="auth__alt">
+          <button
+            type="button"
+            className="auth__linkbtn"
+            onClick={() => {
+              setRecovery((r) => !r);
+              setCode('');
+              setError(null);
+            }}
+          >
+            {recovery ? 'Ввести код из приложения' : 'Использовать резервный код'}
+          </button>
+          <button type="button" className="auth__linkbtn auth__back" onClick={() => onBack(null)}>
+            <ArrowLeft aria-hidden="true" />
+            Назад
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 // Multistream (Streamlabs/Restream-style): while a broadcast is live, push it
 // to the channel's external destinations (Twitch, YouTube, Kick, any RTMP(S)/SRT).
 import { spawn, type ChildProcess } from 'node:child_process';
+import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { config } from '../config.ts';
 import { query } from '../lib/db.ts';
@@ -139,6 +140,7 @@ export class RestreamManager {
     }
     const scrub = (s: string) => redact(r.dest.key ? s.split(r.dest.key).join('***') : s);
     const child = spawn(config.worker.ffmpegPath, buildRestreamArgs(this.inputUrl, r.dest, this.src), { stdio: ['ignore', 'pipe', 'pipe'] });
+    try { if (child.pid) os.setPriority(child.pid, 10); } catch { /* keep default */ }
     r.proc = child;
     setState('connecting');
     const started = Date.now();

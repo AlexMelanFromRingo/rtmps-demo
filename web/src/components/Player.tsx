@@ -1,4 +1,4 @@
-import Hls, { ErrorDetails, ErrorTypes, Events, type Level } from 'hls.js';
+import Hls, { ErrorDetails, ErrorTypes, Events, type HlsConfig, type Level } from 'hls.js';
 import {
   Activity,
   Check,
@@ -11,6 +11,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   useCallback,
@@ -20,20 +21,32 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
 import type { Rendition } from '../api/types';
-import { readPref, writePref } from '../lib/browser';
+import { readPref, readVodPosition, writePref, writeVodPosition } from '../lib/browser';
 import { useLatest } from '../lib/hooks';
-import { codecLabel, formatDecimal, formatKbps, hlsCodecName } from '../lib/format';
+import {
+  codecLabel,
+  formatClock,
+  formatDecimal,
+  formatKbps,
+  hlsCodecName,
+  spokenClock,
+} from '../lib/format';
 import './Player.css';
 
 export type PlayerProps = {
   /** master.m3u8 (relative URLs are fine). Changing it recreates the player. */
   src: string;
   renditions: Rendition[];
-  /** Channel is live (not reconnecting). Enables the stall watchdog. */
+  /** Channel is live (not reconnecting). Enables the stall watchdog. Always false for VOD. */
   live: boolean;
+  /** `vod`: a finished recording — seek bar, timecode, no live-edge logic. */
+  mode?: 'live' | 'vod';
+  /** Live only: the stream uses 1 s segments, so hold the player close to the edge. */
+  lowLatency?: boolean;
   poster?: string | null;
   /** Dashboard preview: always muted, no sound affordance. */
   preview?: boolean;
@@ -41,6 +54,13 @@ export type PlayerProps = {
   /** Rendered over the picture, under the controls (e.g. "reconnecting"). */
   overlay?: ReactNode;
   onPlaying?: () => void;
+  /** VOD: remember and restore the playback position under this id. */
+  resumeId?: string;
+  /** VOD: duration from the API, used until the media reports its own. */
+  durationHint?: number;
+  /** Called once after `watchSeconds` of actual playback (seeking doesn't count). */
+  onWatched?: () => void;
+  watchSeconds?: number;
 };
 
 type LevelInfo = {
@@ -65,6 +85,10 @@ type Stats = {
 
 const STALL_LIMIT_MS = 10_000;
 const MAX_BACKOFF_MS = 15_000;
+const SEEK_STEP_S = 10;
+/** Don't offer to resume within the first/last few seconds of a recording. */
+const RESUME_MIN_S = 5;
+const RESUME_TAIL_S = 10;
 
 function snapshotLevels(levels: Level[]): LevelInfo[] {
   return levels.map((l, index) => ({
@@ -98,21 +122,71 @@ function bufferAhead(video: HTMLVideoElement): number | null {
   return video.buffered.length ? 0 : null;
 }
 
+/** End of the buffered range that contains the playhead (for the seek bar). */
+function bufferedEnd(video: HTMLVideoElement): number {
+  const t = video.currentTime;
+  for (let i = 0; i < video.buffered.length; i++) {
+    if (video.buffered.start(i) <= t + 0.5 && video.buffered.end(i) >= t) return video.buffered.end(i);
+  }
+  return t;
+}
+
+/** hls.js tuning per playback mode. */
+function hlsConfig(mode: 'live' | 'vod', lowLatency: boolean, preview: boolean, startAt: number | null): Partial<HlsConfig> {
+  if (mode === 'vod') {
+    return {
+      capLevelToPlayerSize: preview,
+      backBufferLength: 60,
+      maxBufferLength: 30,
+      ...(startAt != null ? { startPosition: startAt } : {}),
+    };
+  }
+  if (lowLatency) {
+    // Regular (non-LL) HLS with 1 s segments: sit ~2 segments behind the edge,
+    // jump back in when drifting past 5, and catch up a little faster.
+    return {
+      capLevelToPlayerSize: preview,
+      liveDurationInfinity: true,
+      liveSyncDurationCount: 2,
+      liveMaxLatencyDurationCount: 5,
+      maxLiveSyncPlaybackRate: 1.1,
+      maxBufferLength: 4,
+      maxMaxBufferLength: 8,
+      backBufferLength: 10,
+    };
+  }
+  return {
+    capLevelToPlayerSize: preview,
+    backBufferLength: 30,
+    liveDurationInfinity: true,
+    // Gently catch up when we drift behind the live edge.
+    maxLiveSyncPlaybackRate: 1.05,
+  };
+}
+
 export function Player({
   src,
   renditions,
   live,
+  mode = 'live',
+  lowLatency = false,
   poster,
   preview = false,
   label,
   overlay,
   onPlaying,
+  resumeId,
+  durationHint,
+  onWatched,
+  watchSeconds = 10,
 }: PlayerProps) {
+  const isVod = mode === 'vod';
   const rootRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const userPausedRef = useRef(false);
   const onPlayingRef = useLatest(onPlaying);
+  const onWatchedRef = useLatest(onWatched);
 
   const [generation, setGeneration] = useState(0);
   const [engine, setEngine] = useState<Engine>('hls');
@@ -125,6 +199,7 @@ export function Player({
     return Number.isFinite(v) && v > 0 && v <= 1 ? v : 1;
   });
   const [paused, setPaused] = useState(true);
+  const [ended, setEnded] = useState(false);
   const [buffering, setBuffering] = useState(true);
   const [needsGesture, setNeedsGesture] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
@@ -135,16 +210,34 @@ export function Player({
   const [stats, setStats] = useState<Stats | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [idle, setIdle] = useState(false);
+  // VOD timeline
+  const [currentTime, setCurrentTime] = useState(0);
+  const [mediaDuration, setMediaDuration] = useState<number | null>(null);
+  const [buffered, setBuffered] = useState(0);
+  const [scrub, setScrub] = useState<number | null>(null);
+  const [resumedFrom, setResumedFrom] = useState<number | null>(null);
   const needsGestureRef = useLatest(needsGesture);
   // Retry counter survives player rebuilds so a dead master playlist backs off (1 s → 15 s)
   // instead of being re-requested every second. Reset once media actually flows.
   const attemptsRef = useRef(0);
+  // Where to start a VOD: the remembered position, read once per src.
+  const startAtRef = useRef<{ src: string; at: number | null } | null>(null);
+
+  const duration =
+    mediaDuration != null && Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : (durationHint ?? 0);
+  const durationRef = useLatest(duration);
 
   const recreate = useCallback(() => setGeneration((g) => g + 1), []);
 
   const levelOptions = useMemo(() => labelLevels(levels, renditions), [levels, renditions]);
   const current = levelOptions.find((l) => l.index === playingLevel) ?? null;
   const manual = levelOptions.find((l) => l.index === manualLevel) ?? null;
+
+  if (isVod && resumeId && startAtRef.current?.src !== src) {
+    const saved = readVodPosition(resumeId);
+    const limit = durationHint ? durationHint - RESUME_TAIL_S : Infinity;
+    startAtRef.current = { src, at: saved != null && saved > RESUME_MIN_S && saved < limit ? saved : null };
+  }
 
   const tryPlay = useCallback(() => {
     const video = videoRef.current;
@@ -180,6 +273,52 @@ export function Player({
     setMuted(video.muted);
   }, [preview]); // volume intentionally read once
 
+  // --- VOD timeline + resume position ---
+  // Declared before the engine effect so its cleanup (final save) runs before hls.js detaches.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !isVod) return;
+    let lastSaved = 0;
+    const save = (force = false) => {
+      if (!resumeId) return;
+      const t = video.currentTime;
+      const d = durationRef.current;
+      if (!force && Math.abs(t - lastSaved) < 5) return;
+      lastSaved = t;
+      if (video.ended || (d > 0 && t > d - RESUME_TAIL_S) || t < RESUME_MIN_S) writeVodPosition(resumeId, null);
+      else writeVodPosition(resumeId, t);
+    };
+    const onTime = () => {
+      setCurrentTime(video.currentTime);
+      setBuffered(bufferedEnd(video));
+      if (!video.paused) save();
+    };
+    const onProgress = () => setBuffered(bufferedEnd(video));
+    const onDuration = () => setMediaDuration(Number.isFinite(video.duration) ? video.duration : null);
+    const onPauseSave = () => save(true);
+    const onHide = () => save(true);
+    video.addEventListener('timeupdate', onTime);
+    video.addEventListener('seeked', onTime);
+    video.addEventListener('progress', onProgress);
+    video.addEventListener('durationchange', onDuration);
+    video.addEventListener('loadedmetadata', onDuration);
+    video.addEventListener('pause', onPauseSave);
+    video.addEventListener('ended', onPauseSave);
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      // Saving on unmount needs a playhead that was actually reached.
+      if (video.currentTime > 0) save(true);
+      video.removeEventListener('timeupdate', onTime);
+      video.removeEventListener('seeked', onTime);
+      video.removeEventListener('progress', onProgress);
+      video.removeEventListener('durationchange', onDuration);
+      video.removeEventListener('loadedmetadata', onDuration);
+      video.removeEventListener('pause', onPauseSave);
+      video.removeEventListener('ended', onPauseSave);
+      window.removeEventListener('pagehide', onHide);
+    };
+  }, [isVod, resumeId, src, durationRef]);
+
   // --- Engine lifecycle: (re)created when src or generation changes. ---
   useEffect(() => {
     const video = videoRef.current;
@@ -187,6 +326,13 @@ export function Player({
     let disposed = false;
     let retryTimer: number | undefined;
     let mediaErrors: number[] = [];
+    // On a rebuild, continue from where we were (VOD); on first load, from the saved position.
+    const startAt = isVod
+      ? video.currentTime > 0
+        ? video.currentTime
+        : (startAtRef.current?.at ?? null)
+      : null;
+    const resuming = isVod && video.currentTime === 0 && startAt != null;
 
     setLevels([]);
     setPlayingLevel(-1);
@@ -204,13 +350,7 @@ export function Player({
 
     if (Hls.isSupported()) {
       setEngine('hls');
-      const hls = new Hls({
-        capLevelToPlayerSize: preview,
-        backBufferLength: 30,
-        liveDurationInfinity: true,
-        // Gently catch up when we drift behind the live edge.
-        maxLiveSyncPlaybackRate: 1.05,
-      });
+      const hls = new Hls(hlsConfig(mode, lowLatency, preview, startAt));
       hlsRef.current = hls;
 
       const syncLevels = () => {
@@ -219,6 +359,7 @@ export function Player({
       hls.on(Events.MANIFEST_PARSED, () => {
         syncLevels();
         setManualLevel(-1);
+        if (resuming && startAt != null) setResumedFrom(startAt);
         tryPlay();
       });
       hls.on(Events.LEVELS_UPDATED, syncLevels);
@@ -275,6 +416,10 @@ export function Player({
       video.src = src;
       const onMeta = () => {
         attemptsRef.current = 0;
+        if (startAt != null) {
+          video.currentTime = startAt;
+          if (resuming) setResumedFrom(startAt);
+        }
         tryPlay();
       };
       video.addEventListener('loadedmetadata', onMeta, { once: true });
@@ -299,13 +444,16 @@ export function Player({
       hlsRef.current?.destroy();
       hlsRef.current = null;
     };
-  }, [src, generation, preview, tryPlay, recreate]);
+  }, [src, generation, preview, mode, lowLatency, isVod, tryPlay, recreate]);
 
   // --- Media element events ---
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const onPlay = () => setPaused(false);
+    const onPlay = () => {
+      setPaused(false);
+      setEnded(false);
+    };
     const onPause = () => setPaused(true);
     const onWaiting = () => setBuffering(true);
     const onPlayingEv = () => {
@@ -320,12 +468,17 @@ export function Player({
       setMuted(video.muted);
       setVolume(video.volume);
     };
+    const onEnded = () => {
+      setEnded(true);
+      userPausedRef.current = true;
+    };
     video.addEventListener('play', onPlay);
     video.addEventListener('pause', onPause);
     video.addEventListener('waiting', onWaiting);
     video.addEventListener('playing', onPlayingEv);
     video.addEventListener('canplay', onCanPlay);
     video.addEventListener('volumechange', onVolume);
+    video.addEventListener('ended', onEnded);
     return () => {
       video.removeEventListener('play', onPlay);
       video.removeEventListener('pause', onPause);
@@ -333,12 +486,49 @@ export function Player({
       video.removeEventListener('playing', onPlayingEv);
       video.removeEventListener('canplay', onCanPlay);
       video.removeEventListener('volumechange', onVolume);
+      video.removeEventListener('ended', onEnded);
     };
   }, [onPlayingRef]);
 
+  // --- Watch time (for view counting): only real playback, seeks excluded. ---
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !onWatchedRef.current) return;
+    let last = video.currentTime;
+    let watched = 0;
+    let fired = false;
+    const onTime = () => {
+      const t = video.currentTime;
+      const delta = t - last;
+      last = t;
+      if (fired || video.paused || video.seeking) return;
+      if (delta > 0 && delta < 2) watched += delta;
+      if (watched >= watchSeconds) {
+        fired = true;
+        onWatchedRef.current?.();
+      }
+    };
+    const onSeeked = () => {
+      last = video.currentTime;
+    };
+    video.addEventListener('timeupdate', onTime);
+    video.addEventListener('seeked', onSeeked);
+    return () => {
+      video.removeEventListener('timeupdate', onTime);
+      video.removeEventListener('seeked', onSeeked);
+    };
+  }, [src, watchSeconds, onWatchedRef]);
+
+
+  useEffect(() => {
+    if (resumedFrom == null) return;
+    const t = window.setTimeout(() => setResumedFrom(null), 7000);
+    return () => window.clearTimeout(t);
+  }, [resumedFrom]);
+
   // --- Stall watchdog: if the picture hasn't moved for 10 s while live, rebuild from master. ---
   useEffect(() => {
-    if (!live || fatal) return;
+    if (!live || isVod || fatal) return;
     let lastTime = -1;
     let lastProgress = Date.now();
     const id = window.setInterval(() => {
@@ -362,23 +552,26 @@ export function Player({
       }
     }, 1000);
     return () => window.clearInterval(id);
-  }, [live, fatal, recreate]);
+  }, [live, isVod, fatal, recreate]);
 
   // --- Live-edge tracking + stats sampling (1 Hz). ---
+  const behindLimit = lowLatency ? 6 : 12;
   useEffect(() => {
     const id = window.setInterval(() => {
       const video = videoRef.current;
       if (!video) return;
       const hls = hlsRef.current;
-      let edge: number | null = null;
-      if (hls) edge = hls.liveSyncPosition;
-      else if (video.seekable.length) edge = video.seekable.end(video.seekable.length - 1) - 6;
-      setBehindLive(edge != null && edge - video.currentTime > 12);
+      if (!isVod) {
+        let edge: number | null = null;
+        if (hls) edge = hls.liveSyncPosition;
+        else if (video.seekable.length) edge = video.seekable.end(video.seekable.length - 1) - 6;
+        setBehindLive(edge != null && edge - video.currentTime > behindLimit);
+      }
 
       if (statsOpen) {
         const q = typeof video.getVideoPlaybackQuality === 'function' ? video.getVideoPlaybackQuality() : null;
         setStats({
-          latency: hls && Number.isFinite(hls.latency) && hls.latency > 0 ? hls.latency : null,
+          latency: !isVod && hls && Number.isFinite(hls.latency) && hls.latency > 0 ? hls.latency : null,
           buffer: bufferAhead(video),
           bandwidth: hls && Number.isFinite(hls.bandwidthEstimate) ? hls.bandwidthEstimate : null,
           dropped: q ? q.droppedVideoFrames : null,
@@ -386,7 +579,7 @@ export function Player({
       }
     }, 1000);
     return () => window.clearInterval(id);
-  }, [statsOpen]);
+  }, [statsOpen, isVod, behindLimit]);
 
   // --- Fullscreen state ---
   useEffect(() => {
@@ -412,7 +605,7 @@ export function Player({
       userPausedRef.current = false;
       // After a long pause, jump back to live instead of resuming stale buffer.
       const hls = hlsRef.current;
-      if (hls?.liveSyncPosition != null && hls.liveSyncPosition - video.currentTime > 12) {
+      if (!isVod && hls?.liveSyncPosition != null && hls.liveSyncPosition - video.currentTime > 12) {
         video.currentTime = hls.liveSyncPosition;
       }
       tryPlay();
@@ -420,7 +613,20 @@ export function Player({
       userPausedRef.current = true;
       video.pause();
     }
-  }, [tryPlay]);
+  }, [tryPlay, isVod]);
+
+  const seekTo = useCallback(
+    (t: number) => {
+      const video = videoRef.current;
+      if (!video) return;
+      const d = durationRef.current;
+      const target = Math.max(0, d > 0 ? Math.min(t, d - 0.25) : t);
+      video.currentTime = target;
+      setCurrentTime(target);
+      setResumedFrom(null);
+    },
+    [durationRef],
+  );
 
   const setSound = useCallback(
     (on: boolean) => {
@@ -476,8 +682,10 @@ export function Player({
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     poke();
     const target = e.target as HTMLElement;
-    if (target.closest('input, select, textarea, [role="menu"]')) return;
+    const onSeekBar = target.classList.contains('player__seek-input');
+    if (!onSeekBar && target.closest('input, select, textarea, [role="menu"]')) return;
     const onButton = target.closest('button');
+    const video = videoRef.current;
     switch (e.key) {
       case 'k':
       case 'л':
@@ -496,6 +704,30 @@ export function Player({
       case 'а':
         toggleFullscreen();
         break;
+      case 'ArrowLeft':
+      case 'j':
+      case 'о':
+        if (!isVod || !video) return;
+        e.preventDefault();
+        seekTo(video.currentTime - SEEK_STEP_S);
+        break;
+      case 'ArrowRight':
+      case 'l':
+      case 'д':
+        if (!isVod || !video) return;
+        e.preventDefault();
+        seekTo(video.currentTime + SEEK_STEP_S);
+        break;
+      case 'Home':
+        if (!isVod) return;
+        e.preventDefault();
+        seekTo(0);
+        break;
+      case 'End':
+        if (!isVod) return;
+        e.preventDefault();
+        seekTo(durationRef.current);
+        break;
       default:
         return;
     }
@@ -504,17 +736,19 @@ export function Player({
   const showSoundPrompt = !preview && muted && !needsGesture && !fatal;
   const showBigPlay = !fatal && (needsGesture || (paused && userPausedRef.current));
   const showSpinner = !fatal && !showBigPlay && (buffering || recovering);
-  const controlsHidden = idle && !paused && !menuOpen && !statsOpen;
+  const controlsHidden = idle && !paused && !menuOpen && !statsOpen && scrub === null;
 
   const qualityLabel =
     manualLevel === -1 ? (current ? `Авто · ${current.height}p` : 'Авто') : (manual?.label ?? 'Качество');
 
   const statsLevel = current;
+  const shownTime = scrub ?? currentTime;
 
   return (
     <div
       ref={rootRef}
       className="player"
+      data-mode={mode}
       data-controls-hidden={controlsHidden ? 'true' : 'false'}
       data-preview={preview ? 'true' : 'false'}
       tabIndex={0}
@@ -549,8 +783,13 @@ export function Player({
 
       {showBigPlay ? (
         <div className="player__center">
-          <button type="button" className="player__bigplay" onClick={togglePlay} aria-label="Смотреть">
-            <Play aria-hidden="true" />
+          <button
+            type="button"
+            className="player__bigplay"
+            onClick={togglePlay}
+            aria-label={ended ? 'Смотреть сначала' : 'Смотреть'}
+          >
+            {ended ? <RotateCcw aria-hidden="true" className="player__replay" /> : <Play aria-hidden="true" />}
           </button>
         </div>
       ) : null}
@@ -574,10 +813,27 @@ export function Player({
         </button>
       ) : null}
 
+      {resumedFrom != null && !fatal ? (
+        <div className="player__resume" role="status">
+          <span>
+            Продолжаем с <span className="num">{formatClock(resumedFrom)}</span>
+          </span>
+          <button type="button" className="player__resume-btn" onClick={() => seekTo(0)}>
+            Смотреть с начала
+          </button>
+        </div>
+      ) : null}
+
       {statsOpen ? (
         <div className="player__stats" role="status" aria-live="off">
           <div className="player__stats-head">
             <span>Статистика</span>
+            {lowLatency && !isVod ? (
+              <span className="player__ll" title="Эфир идёт с короткими сегментами, плеер держится у края">
+                <Zap aria-hidden="true" />
+                Низкая задержка
+              </span>
+            ) : null}
             <button
               type="button"
               className="player__stats-close"
@@ -588,10 +844,12 @@ export function Player({
             </button>
           </div>
           <dl>
-            <div>
-              <dt>Задержка</dt>
-              <dd>{stats?.latency != null ? `${formatDecimal(stats.latency)} с` : '—'}</dd>
-            </div>
+            {!isVod ? (
+              <div>
+                <dt>Задержка</dt>
+                <dd>{stats?.latency != null ? `${formatDecimal(stats.latency)} с` : '—'}</dd>
+              </div>
+            ) : null}
             <div>
               <dt>Буфер</dt>
               <dd>{stats?.buffer != null ? `${formatDecimal(stats.buffer)} с` : '—'}</dd>
@@ -625,6 +883,19 @@ export function Player({
       ) : null}
 
       <div className="player__controls">
+        {isVod ? (
+          <SeekBar
+            time={shownTime}
+            duration={duration}
+            buffered={buffered}
+            onScrub={setScrub}
+            onCommit={(t) => {
+              setScrub(null);
+              seekTo(t);
+            }}
+          />
+        ) : null}
+
         <button
           type="button"
           className="player__btn"
@@ -659,7 +930,15 @@ export function Player({
           </div>
         ) : null}
 
-        {behindLive ? (
+        {isVod ? (
+          <span className="player__time num" aria-hidden="true">
+            {formatClock(shownTime)}
+            <span className="player__time-sep"> / </span>
+            {formatClock(duration)}
+          </span>
+        ) : null}
+
+        {!isVod && behindLive ? (
           <button type="button" className="player__golive" onClick={goLive}>
             <span className="player__golive-dot" aria-hidden="true" />
             К прямому эфиру
@@ -703,6 +982,76 @@ export function Player({
           </button>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+type SeekBarProps = {
+  time: number;
+  duration: number;
+  buffered: number;
+  /** Dragging: preview position (null when the drag ends). */
+  onScrub: (t: number | null) => void;
+  onCommit: (t: number) => void;
+};
+
+/**
+ * VOD timeline: a native range input (keyboard + screen readers; arrow keys are handled
+ * by the player as ±10 s) layered over a drawn track with buffered/played fills.
+ */
+function SeekBar({ time, duration, buffered, onScrub, onCommit }: SeekBarProps) {
+  const draggingRef = useRef(false);
+  const [hover, setHover] = useState<{ x: number; t: number } | null>(null);
+  const d = duration > 0 ? duration : 0;
+  const pct = (v: number) => (d ? `${Math.min(100, Math.max(0, (v / d) * 100))}%` : '0%');
+
+  const onMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!d || e.pointerType === 'touch') return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    setHover({ x: frac * rect.width, t: frac * d });
+  };
+
+  const end = (value: number) => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    onScrub(null);
+    onCommit(value);
+  };
+
+  return (
+    <div className="player__seek" onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
+      <div className="player__track" aria-hidden="true">
+        <span className="player__buffered" style={{ width: pct(buffered) }} />
+        <span className="player__played" style={{ width: pct(time) }} />
+        <span className="player__head" style={{ left: pct(time) }} />
+      </div>
+      <input
+        className="player__seek-input"
+        type="range"
+        min={0}
+        max={d || 1}
+        step="any"
+        value={Math.min(time, d || 1)}
+        disabled={!d}
+        aria-label="Перемотка"
+        aria-valuetext={`${spokenClock(time)} из ${spokenClock(d)}`}
+        onPointerDown={() => {
+          draggingRef.current = true;
+        }}
+        onPointerUp={(e) => end(Number(e.currentTarget.value))}
+        onPointerCancel={(e) => end(Number(e.currentTarget.value))}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          if (draggingRef.current) onScrub(v);
+          else onCommit(v);
+        }}
+      />
+      {hover ? (
+        <span className="player__seek-tip num" style={{ left: hover.x }} aria-hidden="true">
+          {formatClock(hover.t)}
+        </span>
+      ) : null}
     </div>
   );
 }

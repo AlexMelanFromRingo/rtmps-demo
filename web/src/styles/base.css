@@ -701,3 +701,15 @@ select.input {
     animation-iteration-count: infinite !important;
   }
 }
+
+/* ---------- OBS overlay route: fully transparent page ---------- */
+html.overlay-mode,
+html.overlay-mode body {
+  background: transparent !important;
+  color-scheme: normal;
+}
+
+html.overlay-mode body {
+  overflow: hidden;
+  min-height: 0;
+}

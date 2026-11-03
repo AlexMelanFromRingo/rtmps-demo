@@ -64,7 +64,7 @@ test('parseRate and probeResultToSource', () => {
 
 test('parseProgress', () => {
   const p = parseProgress('frame=100\nfps=29.97\nout_time_us=3336666\nspeed=1.01x\nprogress=continue\n');
-  assert.deepEqual(p, { fps: 29.97, speed: 1.01, outTimeSec: 3.336666 });
+  assert.deepEqual(p, { fps: 29.97, speed: 1.01, outTimeSec: 3.336666, frames: 100 });
 });
 
 test('choosePullUrl: H.264/H.265 over SRT (keeps DTS), others over RTSP', () => {

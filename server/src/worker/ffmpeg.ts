@@ -246,7 +246,7 @@ export async function detectEncoder(ffmpegPath: string, wanted: string): Promise
 }
 
 // ── progress ────────────────────────────────────────────────────────────────
-export type Progress = { fps: number | null; speed: number | null; outTimeSec: number | null };
+export type Progress = { fps: number | null; speed: number | null; outTimeSec: number | null; frames: number | null };
 
 /** Parses one `-progress` block (key=value lines). */
 export function parseProgress(block: string): Progress {
@@ -261,5 +261,5 @@ export function parseProgress(block: string): Progress {
     return Number.isFinite(n) ? n : null;
   };
   const us = num(kv.get('out_time_us'));
-  return { fps: num(kv.get('fps')), speed: num(kv.get('speed')), outTimeSec: us === null ? null : us / 1e6 };
+  return { fps: num(kv.get('fps')), speed: num(kv.get('speed')), outTimeSec: us === null ? null : us / 1e6, frames: num(kv.get('frame')) };
 }

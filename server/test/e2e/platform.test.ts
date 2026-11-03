@@ -106,7 +106,8 @@ async function waitLive(client: Client, what: string, container?: string): Promi
       docker(['start', container]);
     }
     const d = (await client.get('/api/dashboard')).json as Dashboard;
-    return d.live?.playbackUrl && d.live.renditions.length > 0 ? d.live : null;
+    // Wait for the complete master (the passthrough variant may land a GOP later).
+    return d.live?.playbackUrl && d.live.renditions.some((r) => r.name === 'source') ? d.live : null;
   }, 60_000);
 }
 
@@ -142,7 +143,7 @@ async function assertPlayable(live: NonNullable<Dashboard['live']>, expectCodecs
   const thumb = await waitFor('thumbnail', async () => {
     const r = await hls(live.thumbnailUrl!);
     return r.status === 200 ? r : null;
-  }, 20_000);
+  }, 40_000); // first thumbnail ≈ 5–10 s of processed media; slower on an oversubscribed test box
   assert.equal(thumb.headers.get('content-type'), 'image/jpeg');
   return master;
 }

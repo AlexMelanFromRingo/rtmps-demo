@@ -124,3 +124,68 @@ export function useMediaQuery(query: string): boolean {
     () => false,
   );
 }
+
+/** `value`, updated only after it has been stable for `ms`. */
+export function useDebouncedValue<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebounced(value), ms);
+    return () => window.clearTimeout(t);
+  }, [value, ms]);
+  return debounced;
+}
+
+export type ResourceState<T> = {
+  data: T | null;
+  error: unknown;
+  loading: boolean;
+  reload: () => void;
+  mutate: (updater: (prev: T | null) => T | null) => void;
+};
+
+/**
+ * One-shot fetch that re-runs when `key` changes (and on `reload()`), aborting stale requests.
+ * Keeps the previous data while reloading so lists don't flash.
+ */
+export function useResource<T>(
+  fetcher: (signal: AbortSignal) => Promise<T>,
+  key: string,
+  enabled = true,
+): ResourceState<T> {
+  const fetcherRef = useLatest(fetcher);
+  const [nonce, setNonce] = useState(0);
+  const [state, setState] = useState<{ data: T | null; error: unknown; loading: boolean; key: string }>({
+    data: null,
+    error: null,
+    loading: enabled,
+    key,
+  });
+
+  useEffect(() => {
+    if (!enabled) return;
+    const ctrl = new AbortController();
+    setState((s) => ({ data: s.key === key ? s.data : null, error: null, loading: true, key }));
+    fetcherRef.current(ctrl.signal).then(
+      (data) => setState({ data, error: null, loading: false, key }),
+      (err: unknown) => {
+        if (isAbortError(err)) return;
+        setState((s) => ({ ...s, error: err, loading: false }));
+      },
+    );
+    return () => ctrl.abort();
+  }, [key, nonce, enabled, fetcherRef]);
+
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+  const mutate = useCallback(
+    (updater: (prev: T | null) => T | null) => setState((s) => ({ ...s, data: updater(s.data) })),
+    [],
+  );
+  const stale = state.key !== key;
+  return {
+    data: stale ? null : state.data,
+    error: stale ? null : state.error,
+    loading: stale ? enabled : state.loading,
+    reload,
+    mutate,
+  };
+}

@@ -72,3 +72,71 @@
     padding-top: var(--s-5);
   }
 }
+
+/* ----- 2FA step ----- */
+.auth__badge {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid var(--ok);
+  color: var(--fog);
+}
+
+.auth__badge svg {
+  width: 22px;
+  height: 22px;
+}
+
+.auth__code {
+  font-family: var(--font-display);
+  font-size: var(--fs-24);
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  min-height: 56px;
+}
+
+.auth__code::placeholder {
+  letter-spacing: 0.3em;
+  color: var(--rule);
+}
+
+.auth__alt {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-4);
+}
+
+.auth__linkbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fog);
+  font-size: var(--fs-14);
+  text-decoration: underline;
+  text-decoration-color: var(--edge);
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.auth__linkbtn:hover {
+  text-decoration-color: currentColor;
+}
+
+.auth__back {
+  color: var(--haze);
+  text-decoration: none;
+}
+
+.auth__back svg {
+  width: 16px;
+  height: 16px;
+}

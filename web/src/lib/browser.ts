@@ -83,3 +83,57 @@ export function writePref(key: string, value: string): void {
     /* storage unavailable — preference just won't persist */
   }
 }
+
+/** 18+ consent is remembered per channel (VODs of that channel share it). */
+export function hasMatureConsent(slug: string): boolean {
+  return readPref(`mature.${slug.toLowerCase()}`) === '1';
+}
+
+export function giveMatureConsent(slug: string): void {
+  writePref(`mature.${slug.toLowerCase()}`, '1');
+}
+
+/** Saves a text file through a temporary object URL (works without a secure context). */
+export function downloadText(filename: string, text: string): void {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ---- VOD resume positions: one bounded map instead of a key per video.
+const VOD_POS_KEY = 'vodpos';
+const VOD_POS_MAX = 50;
+
+type VodPositions = Record<string, { t: number; at: number }>;
+
+function readVodPositions(): VodPositions {
+  try {
+    const raw = readPref(VOD_POS_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? (parsed as VodPositions) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function readVodPosition(id: string): number | null {
+  const entry = readVodPositions()[id];
+  return entry && Number.isFinite(entry.t) && entry.t > 0 ? entry.t : null;
+}
+
+export function writeVodPosition(id: string, seconds: number | null): void {
+  const all = readVodPositions();
+  if (seconds == null) delete all[id];
+  else all[id] = { t: Math.floor(seconds), at: Date.now() };
+  const trimmed = Object.entries(all)
+    .sort((a, b) => b[1].at - a[1].at)
+    .slice(0, VOD_POS_MAX);
+  writePref(VOD_POS_KEY, JSON.stringify(Object.fromEntries(trimmed)));
+}

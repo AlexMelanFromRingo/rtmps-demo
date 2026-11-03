@@ -110,7 +110,8 @@ export const config = {
     restreamMax: int('RESTREAM_MAX_PER_CHANNEL', 5),
     listSize: int('HLS_LIST_SIZE', 6),
     thumbnailEverySec: int('THUMBNAIL_INTERVAL_SEC', 10),
-    leaseSec: int('JOB_LEASE_SEC', 10),
+    // Lease 15 s / heartbeat 3 s → self-fencing after 11 s without a renewal.
+    leaseSec: int('JOB_LEASE_SEC', 15),
     heartbeatSec: int('JOB_HEARTBEAT_SEC', 3),
     // RTSP credentials the worker uses to pull from ingest nodes.
     ingestReadUser: 'transcoder',

@@ -1,9 +1,11 @@
 import { RotateCcw, TriangleAlert } from 'lucide-react';
 import { Link } from 'react-router';
 import { api, errorMessage } from '../api/client';
+import { Avatar } from '../components/Avatar';
 import { StreamTile } from '../components/StreamTile';
 import { useAuth } from '../lib/auth';
-import { formatCount, plural, viewersWord } from '../lib/format';
+import { useFollowing } from '../lib/following';
+import { formatCompact, formatCount, plural, viewersLabel, viewersWord } from '../lib/format';
 import { useDocumentTitle, useNow, usePolling } from '../lib/hooks';
 import './DirectoryPage.css';
 
@@ -12,6 +14,7 @@ const POLL_MS = 15_000;
 export function DirectoryPage() {
   useDocumentTitle('Сейчас в эфире');
   const { auth } = useAuth();
+  const { live: followedLive } = useFollowing();
   const poll = usePolling((signal) => api.streams(signal), POLL_MS);
   const now = useNow(30_000);
 
@@ -37,6 +40,33 @@ export function DirectoryPage() {
           </p>
         ) : null}
       </div>
+
+      {followedLive.length ? (
+        // Small screens have no rail: show followed live channels as a strip.
+        <section className="fstrip" aria-labelledby="fstrip-h">
+          <h2 className="fstrip__title" id="fstrip-h">
+            Отслеживаемые в эфире
+          </h2>
+          <ul className="fstrip__list">
+            {followedLive.map(({ channel, live }) => (
+              <li key={channel.slug}>
+                <Link to={`/${channel.slug}`} className="fstrip__item">
+                  <Avatar channel={channel} size={40} live />
+                  <span className="fstrip__text">
+                    <span className="fstrip__name">{channel.displayName}</span>
+                    <span className="fstrip__viewers">
+                      <span className="visually-hidden">{live ? viewersLabel(live.viewers) : ''}</span>
+                      <span aria-hidden="true" className="num">
+                        {live ? formatCompact(live.viewers) : ''}
+                      </span>
+                    </span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {poll.error && streams ? (
         <p className="directory__stale" role="status">

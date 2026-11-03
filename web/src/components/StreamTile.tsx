@@ -10,7 +10,7 @@ import {
   viewersWord,
   withCacheBust,
 } from '../lib/format';
-import { Monogram } from './Monogram';
+import { Avatar } from './Avatar';
 import { StatusBadge, broadcastState } from './StatusBadge';
 import { Thumb } from './Thumb';
 
@@ -44,6 +44,11 @@ export function StreamTile({ stream, thumbTick, now, featured = false }: Props) 
         />
         <div className="tile__top">
           <StatusBadge state={state} />
+          {channel.mature ? (
+            <span className="tile__pill tile__mature" title="Контент для взрослых">
+              18+
+            </span>
+          ) : null}
         </div>
         <div className="tile__bottom">
           <span className="tile__pill num" aria-label={`${formatCount(live.viewers)} ${viewersWord(live.viewers)}`}>
@@ -56,7 +61,7 @@ export function StreamTile({ stream, thumbTick, now, featured = false }: Props) 
         </div>
       </div>
       <div className="tile__umd">
-        <Monogram name={channel.displayName} seed={channel.slug} size={featured ? 44 : 36} />
+        <Avatar channel={channel} size={featured ? 44 : 36} />
         <div className="tile__meta">
           <h3 className="tile__title">
             <Link to={`/${channel.slug}`} className="tile__link">

@@ -86,6 +86,10 @@ export async function heartbeat(jobId: string, leaseId: string, leaseSec: number
   return row !== null;
 }
 
+export async function jobState(jobId: string): Promise<{ state: string; lease_id: string | null } | null> {
+  return one<{ state: string; lease_id: string | null }>('SELECT state, lease_id FROM transcode_jobs WHERE id = $1', [jobId]);
+}
+
 /** Give the job back to the queue (retry with backoff, possibly on another worker). */
 export async function releaseJob(jobId: string, leaseId: string, opts: { delaySec: number; error?: string | undefined; resetAttempts: boolean }): Promise<void> {
   await query(`

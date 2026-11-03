@@ -1,9 +1,17 @@
 import { Check, Info, TriangleAlert } from 'lucide-react';
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { api, errorMessage } from '../../api/client';
-import type { ChannelPrivate, TranscodeMode } from '../../api/types';
+import type { ChannelPatch, ChannelPrivate, TranscodeMode } from '../../api/types';
+import { Switch } from '../../components/Switch';
 
-type Values = { title: string; category: string; transcodeMode: TranscodeMode };
+type Values = {
+  title: string;
+  category: string;
+  transcodeMode: TranscodeMode;
+  lowLatency: boolean;
+  saveVods: boolean;
+  mature: boolean;
+};
 
 const CATEGORY_SUGGESTIONS = [
   'Just Chatting',
@@ -30,11 +38,25 @@ const MODES: { value: TranscodeMode; title: string; text: string }[] = [
 ];
 
 function fromChannel(c: ChannelPrivate): Values {
-  return { title: c.title, category: c.category, transcodeMode: c.transcodeMode };
+  return {
+    title: c.title,
+    category: c.category,
+    transcodeMode: c.transcodeMode,
+    lowLatency: Boolean(c.lowLatency),
+    saveVods: c.saveVods ?? true,
+    mature: Boolean(c.mature),
+  };
 }
 
 function same(a: Values, b: Values) {
-  return a.title === b.title && a.category === b.category && a.transcodeMode === b.transcodeMode;
+  return (
+    a.title === b.title &&
+    a.category === b.category &&
+    a.transcodeMode === b.transcodeMode &&
+    a.lowLatency === b.lowLatency &&
+    a.saveVods === b.saveVods &&
+    a.mature === b.mature
+  );
 }
 
 export function StreamInfoForm({
@@ -55,13 +77,13 @@ export function StreamInfoForm({
   const dirty = !same(values, baseline);
 
   // Follow server-side changes (other tab, etc.) unless the user is editing.
-  const { title, category, transcodeMode } = channel;
+  const { title, category, transcodeMode, lowLatency, saveVods, mature } = channel;
   useEffect(() => {
-    const server = { title, category, transcodeMode };
+    const server = fromChannel({ ...channel, title, category, transcodeMode, lowLatency, saveVods, mature });
     setBaseline((prev) => (same(prev, server) ? prev : server));
     setValues((prev) => (dirty ? prev : server));
-    // `dirty` is read at the time the server value changes, intentionally not a dependency.
-  }, [title, category, transcodeMode]);
+    // `dirty` / `channel` are read at the time the server value changes, intentionally not dependencies.
+  }, [title, category, transcodeMode, lowLatency, saveVods, mature]);
 
   useEffect(() => {
     if (!saved) return;
@@ -79,10 +101,13 @@ export function StreamInfoForm({
     if (!dirty || saving) return;
     setSaving(true);
     setError(null);
-    const patch: Partial<Values> = {};
+    const patch: ChannelPatch = {};
     if (values.title.trim() !== baseline.title) patch.title = values.title.trim();
     if (values.category.trim() !== baseline.category) patch.category = values.category.trim();
     if (values.transcodeMode !== baseline.transcodeMode) patch.transcodeMode = values.transcodeMode;
+    if (values.lowLatency !== baseline.lowLatency) patch.lowLatency = values.lowLatency;
+    if (values.saveVods !== baseline.saveVods) patch.saveVods = values.saveVods;
+    if (values.mature !== baseline.mature) patch.mature = values.mature;
     try {
       const res = await api.patchChannel(patch);
       const next = fromChannel(res.channel);
@@ -98,6 +123,7 @@ export function StreamInfoForm({
   };
 
   const modeChanged = values.transcodeMode !== baseline.transcodeMode;
+  const latencyChanged = values.lowLatency !== baseline.lowLatency;
 
   return (
     <section className="panel" aria-labelledby="info-h">
@@ -168,10 +194,36 @@ export function StreamInfoForm({
           ))}
         </fieldset>
 
-        {modeChanged && isLive ? (
+        <fieldset className="switches">
+          <legend className="field__label">Настройки эфира</legend>
+          <Switch
+            label="Низкая задержка"
+            description="Сегменты по 1 секунде: зрители видят вас через 3–4 с вместо 6–10, но на слабом интернете чаще бывает буферизация. Включается со следующего эфира."
+            checked={values.lowLatency}
+            onChange={(v) => set('lowLatency', v)}
+          />
+          <Switch
+            label="Сохранять записи эфиров"
+            description="После эфира запись появится на вкладке «Видео» канала, с перемоткой. Хранится ограниченное время."
+            checked={values.saveVods}
+            onChange={(v) => set('saveVods', v)}
+          />
+          <Switch
+            label="Контент 18+"
+            description="Перед просмотром зрители подтвердят, что им есть 18 лет. В каталоге появится отметка «18+»."
+            checked={values.mature}
+            onChange={(v) => set('mature', v)}
+          />
+        </fieldset>
+
+        {(modeChanged || latencyChanged) && isLive ? (
           <p className="dash-form__note">
             <Info aria-hidden="true" />
-            Режим перекодирования применится со следующего запуска эфира.
+            {modeChanged && latencyChanged
+              ? 'Режим перекодирования и задержка применятся со следующего запуска эфира.'
+              : modeChanged
+                ? 'Режим перекодирования применится со следующего запуска эфира.'
+                : 'Режим задержки применится со следующего запуска эфира.'}
           </p>
         ) : null}
 

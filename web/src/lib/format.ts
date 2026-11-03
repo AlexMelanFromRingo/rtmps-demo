@@ -170,3 +170,69 @@ export function initialOf(name: string): string {
   const ch = name.trim().charAt(0);
   return ch ? ch.toUpperCase() : '?';
 }
+
+/** Seconds → "3:07", "1:02:05" (player timecode). */
+export function formatClock(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  return formatUptime(seconds * 1000);
+}
+
+/** Spoken form of a timecode for screen readers: "1 ч 2 мин 5 с". */
+export function spokenClock(seconds: number): string {
+  const total = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return [h ? `${h} ч` : '', m ? `${m} мин` : '', `${s} с`].filter(Boolean).join(' ');
+}
+
+export function followersLabel(n: number): string {
+  return `${formatCount(n)} ${plural(n, 'подписчик', 'подписчика', 'подписчиков')}`;
+}
+
+export function viewsLabel(n: number): string {
+  return `${formatCount(n)} ${plural(n, 'просмотр', 'просмотра', 'просмотров')}`;
+}
+
+const compactFmt = new Intl.NumberFormat(LOCALE, { notation: 'compact', maximumFractionDigits: 1 });
+
+/** 1234 → "1,2 тыс." — for tight spots (sidebar). */
+export function formatCompact(n: number): string {
+  return n < 1000 ? numberFmt.format(n) : compactFmt.format(n);
+}
+
+/** "10 ноября" (+ year when not the current one). */
+export function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return new Intl.DateTimeFormat(LOCALE, {
+    day: 'numeric',
+    month: 'long',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  }).format(d);
+}
+
+/** "14:05" */
+export function formatTime(iso: string | number): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return new Intl.DateTimeFormat(LOCALE, { hour: '2-digit', minute: '2-digit' }).format(d);
+}
+
+const relFmt = new Intl.RelativeTimeFormat(LOCALE, { numeric: 'auto' });
+
+/** "только что", "5 минут назад", "вчера", "3 дня назад", then a plain date. */
+export function formatAgo(iso: string, now = Date.now()): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '—';
+  const sec = Math.round((now - t) / 1000);
+  if (sec < 60) return 'только что';
+  const min = Math.round(sec / 60);
+  if (min < 60) return relFmt.format(-min, 'minute');
+  const h = Math.round(min / 60);
+  if (h < 24) return relFmt.format(-h, 'hour');
+  const days = Math.round(h / 24);
+  if (days < 7) return relFmt.format(-days, 'day');
+  return formatDate(iso);
+}

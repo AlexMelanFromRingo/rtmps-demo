@@ -57,15 +57,7 @@
   background: var(--standby);
 }
 
-/* ----- Non-player stages ----- */
-.stage {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  background: var(--well);
-  border-radius: var(--r-well);
-  overflow: hidden;
-}
+/* ----- Non-player stages (base .stage lives in components.css) ----- */
 
 .stage__thumb {
   position: absolute;
@@ -349,4 +341,159 @@
 .source-grid__item dd {
   font-size: var(--fs-16);
   font-weight: 600;
+}
+
+/* ----- v2: identity extras, follow, tabs, about ----- */
+.channel__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+a.channel__category {
+  text-decoration: none;
+}
+
+a.channel__category:hover {
+  border-color: var(--edge);
+  background: var(--console);
+}
+
+.channel__mature {
+  color: var(--standby);
+  border-color: rgb(255 178 36 / 0.5);
+}
+
+.channel__side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-4) var(--s-6);
+}
+
+.channel__follow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+}
+
+.channel__followers {
+  font-size: var(--fs-14);
+  color: var(--haze);
+  white-space: nowrap;
+}
+
+.channel__tabs {
+  margin-top: calc(var(--s-2) * -1);
+}
+
+.channel__tabs .tabs__tab .live-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.channel__panels > .about {
+  grid-column: 1 / -1;
+}
+
+.offline__videos {
+  margin-top: var(--s-1);
+}
+
+.about {
+  display: grid;
+  gap: var(--s-3);
+  justify-items: start;
+}
+
+.about__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) var(--s-4);
+}
+
+.about__followers {
+  font-size: var(--fs-14);
+  color: var(--haze);
+}
+
+.about__bio {
+  max-width: 72ch;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.about__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.about__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 40px;
+  max-width: 100%;
+  padding: 0 var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  background: var(--night);
+  color: var(--fog);
+  font-size: var(--fs-14);
+  text-decoration: none;
+}
+
+.about__link:hover {
+  border-color: var(--edge);
+  background: var(--console);
+}
+
+.about__link svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--haze);
+}
+
+.about__link-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.about__link-host {
+  color: var(--haze);
+  font-size: var(--fs-13);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.about__empty {
+  font-size: var(--fs-14);
+}
+
+.about__edit {
+  margin-top: var(--s-1);
+}
+
+.channel__retention {
+  margin-bottom: var(--s-4);
+  font-size: var(--fs-13);
+}
+
+@media (max-width: 520px) {
+  .channel__side {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .about__link-host {
+    display: none;
+  }
 }

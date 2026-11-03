@@ -11,12 +11,15 @@ export default defineConfig({
       // SSE (/api/channels/:slug/events) streams through this proxy as-is.
       '/api': { target: backend, changeOrigin: false },
       '/hls': { target: backend, changeOrigin: false },
+      // Uploaded avatars (v2).
+      '/media': { target: backend, changeOrigin: false },
     },
   },
   preview: {
     proxy: {
       '/api': { target: backend, changeOrigin: false },
       '/hls': { target: backend, changeOrigin: false },
+      '/media': { target: backend, changeOrigin: false },
     },
   },
   build: {

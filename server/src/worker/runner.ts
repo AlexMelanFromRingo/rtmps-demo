@@ -1,6 +1,7 @@
 // Executes one claimed transcode job end-to-end:
 // probe source → plan ladder → run ffmpeg → publish HLS → keep lease alive.
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config.ts';
 import { publishChannelEvent } from '../lib/events.ts';
@@ -14,7 +15,7 @@ import { parseRungs, planLadder, sourceUpgraded } from './ladder.ts';
 import { JobOutput } from './output.ts';
 import type { SegmentReceiver } from './receiver.ts';
 import {
-  heartbeat, loadJobContext, markBroadcastReady, releaseJob, setJobState, updateBroadcastSource, type JobRow,
+  heartbeat, jobState, loadJobContext, markBroadcastReady, releaseJob, setJobState, updateBroadcastSource, type JobRow,
 } from './queue.ts';
 import { metrics } from './metrics.ts';
 
@@ -38,6 +39,15 @@ export function withReadCredentials(url: string): string {
   return u.toString();
 }
 
+/**
+ * Encoders run at a lower CPU priority than this process: a worker is meant
+ * to be 100% busy, and the lease heartbeat must still run on time.
+ */
+export function lowerPriority(pid: number | undefined): void {
+  if (!pid) return;
+  try { os.setPriority(pid, 10); } catch { /* not permitted: keep default */ }
+}
+
 export function backoffSec(attempts: number): number {
   return Math.min(15, 2 ** Math.max(0, attempts - 1));
 }
@@ -48,6 +58,7 @@ function runFfmpeg(args: string[], signal: AbortSignal, onProgress: (p: Progress
   return new Promise((resolve) => {
     const started = Date.now();
     const child = spawn(config.worker.ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    lowerPriority(child.pid);
     const tail: string[] = [];
     let block = '';
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
@@ -88,7 +99,8 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
   deps.shutdown.addEventListener('abort', onShutdown, { once: true });
   const jobStarted = Date.now();
   let leaseLost = false;
-  let progress: Progress = { fps: null, speed: null, outTimeSec: null };
+  let progress: Progress = { fps: null, speed: null, outTimeSec: null, frames: null };
+  let lastProgressAt = 0;
   let output: JobOutput | null = null;
   let token: string | null = null;
   let renditionCount = 0;
@@ -107,11 +119,21 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
   const fenceMs = Math.max(2000, (config.worker.leaseSec - config.worker.heartbeatSec - 1) * 1000);
   let lastRenewStart = Date.now();
   let renewing = false;
+  let endedByControl = false;
   const fenceOff = (why: string) => {
     if (leaseLost) return;
     log.warn({ why }, 'lost the job lease — stopping and discarding pending output');
     leaseLost = true;
     output?.abort(); // a fenced worker must not write anything else
+    kill.abort();
+  };
+  // The control plane finished/cancelled the job (stream ended or moved): nobody
+  // else owns it, so stop gracefully and keep the tail of the recording.
+  const endGracefully = () => {
+    if (leaseLost) return;
+    log.info('job ended by the control plane — finishing gracefully');
+    leaseLost = true;
+    endedByControl = true;
     kill.abort();
   };
   const hb = setInterval(() => {
@@ -124,9 +146,11 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
         pendingUploads: output?.stats.pending ?? 0, worker: workerId,
         restreams: restream?.statuses() ?? [],
       };
-      heartbeat(job.id, job.lease_id, config.worker.leaseSec, stats).then((owned) => {
-        if (owned) lastRenewStart = started;
-        else fenceOff('job finished, cancelled or re-claimed');
+      heartbeat(job.id, job.lease_id, config.worker.leaseSec, stats).then(async (owned) => {
+        if (owned) { lastRenewStart = started; return; }
+        const state = await jobState(job.id).catch(() => null);
+        if (state && (state.state === 'finished' || state.state === 'cancelled') && state.lease_id === null) endGracefully();
+        else fenceOff('job re-claimed by another worker');
       }).catch((err: unknown) => {
         log.warn({ err: (err as Error).message }, 'lease heartbeat failed');
       }).finally(() => { renewing = false; });
@@ -134,10 +158,14 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
     if (Date.now() - lastRenewStart > fenceMs) fenceOff('could not renew the lease in time');
 
     if (!output || kill.signal.aborted) return;
-    // Stall watchdog: no new media from ffmpeg for a long time → restart.
-    const stallMs = Math.max(20_000, config.worker.segmentSec * 8000);
-    if (Date.now() - (output.stats.lastSegmentAt ?? jobStarted) > stallMs) {
-      log.warn({ stallMs }, 'no segments produced — restarting transcode');
+    // Stall watchdog: neither segments nor encoder progress for a long time → restart.
+    // (A heavily loaded encoder that still advances is slow, not stuck.)
+    // Before the first segment a heavy ladder on a busy host may need a while
+    // (decoder + N encoders warming up); ffmpeg itself exits on dead input (-timeout).
+    const stallMs = output.stats.lastSegmentAt ? Math.max(20_000, config.worker.segmentSec * 8000) : 60_000;
+    const lastActivity = Math.max(output.stats.lastSegmentAt ?? 0, lastProgressAt, jobStarted);
+    if (Date.now() - lastActivity > stallMs) {
+      log.warn({ stallMs }, 'transcode stalled (no progress, no segments) — restarting');
       kill.abort();
     }
     // Upload watchdog: object storage stuck or far behind → restart instead of
@@ -254,10 +282,14 @@ export async function runJob(job: JobRow, deps: RunnerDeps): Promise<void> {
       }).catch(() => { /* transient; ffmpeg itself detects a dead source */ }).finally(() => { probing = false; });
     }, 5000);
 
-    const result = await runFfmpeg(args, kill.signal, (p) => { progress = p; });
+    const result = await runFfmpeg(args, kill.signal, (p) => {
+      // Frames advance before the HLS muxer writes anything; out_time after.
+      if ((p.outTimeSec ?? 0) > (progress.outTimeSec ?? 0) || (p.frames ?? 0) > (progress.frames ?? 0)) lastProgressAt = Date.now();
+      progress = p;
+    });
     clearInterval(watch);
     restream.stop();
-    if (leaseLost) output.abort();
+    if (leaseLost && !endedByControl) output.abort();
     else {
       await output.drain();
       clearInterval(vodTimer);

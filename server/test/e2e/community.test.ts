@@ -158,7 +158,9 @@ describe('live features: low latency, categories/search, health, multistream, VO
       return v?.[0];
     }, 120_000, 3000);
     assert.equal(video.title, `Запись ${SUFFIX}`);
-    assert.ok(video.durationSec >= 10 && video.durationSec <= 90, `duration ${video.durationSec}`);
+    // Whole broadcast incl. its last seconds (graceful end flushes the recording).
+    const wallSec = (Date.parse(video.endedAt) - Date.parse(video.startedAt)) / 1000;
+    assert.ok(video.durationSec >= wallSec - 8 && video.durationSec <= wallSec + 2, `duration ${video.durationSec} vs broadcast ${wallSec}`);
     const master = await (await fetch(new URL(video.playbackUrl, HLS_ORIGIN))).text();
     const firstVariant = master.split('\n').find((l) => l.endsWith('/vod.m3u8'))!;
     const vodPl = await (await fetch(new URL(firstVariant, new URL(video.playbackUrl, HLS_ORIGIN)))).text();

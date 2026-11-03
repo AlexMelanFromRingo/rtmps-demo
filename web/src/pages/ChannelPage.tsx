@@ -1,18 +1,23 @@
-import { CalendarClock, RotateCcw, TriangleAlert, WifiOff } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router';
+import { CalendarClock, RotateCcw, SquarePlay, TriangleAlert, WifiOff } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { ApiError, api, errorMessage, isAbortError } from '../api/client';
-import type { ChannelPublic, ChannelStateEvent, LastBroadcast, LiveInfo } from '../api/types';
-import { Monogram } from '../components/Monogram';
+import type { ChannelPublic, ChannelStateEvent, ChannelViewer, LastBroadcast, LiveInfo } from '../api/types';
+import { Avatar } from '../components/Avatar';
+import { FollowButton } from '../components/FollowButton';
+import { categoryHref } from '../components/header/HeaderSearch';
+import { MatureGate } from '../components/MatureGate';
 import { Player } from '../components/Player';
 import { RenditionLadder } from '../components/RenditionLadder';
 import { StatusBadge, broadcastState, type BroadcastState } from '../components/StatusBadge';
 import { Thumb } from '../components/Thumb';
-import { getViewerId } from '../lib/browser';
+import { useAuth } from '../lib/auth';
+import { getViewerId, hasMatureConsent } from '../lib/browser';
 import {
   codecLabel,
   formatCount,
   formatDateTime,
+  followersLabel,
   formatDuration,
   formatFps,
   formatRelativeDay,
@@ -23,6 +28,7 @@ import {
   withCacheBust,
 } from '../lib/format';
 import { useDocumentTitle, useDocumentVisible, useLatest, useNow } from '../lib/hooks';
+import { ChannelAbout, ChannelVideos } from './ChannelSections';
 import { NotFoundPage } from './NotFoundPage';
 import './ChannelPage.css';
 
@@ -34,7 +40,9 @@ const SSE_SILENCE_MS = 40_000;
 
 type Phase = 'loading' | 'ready' | 'notfound' | 'error';
 
-type ChannelInfo = { channel: ChannelPublic; lastBroadcast: LastBroadcast | null };
+type ChannelInfo = { channel: ChannelPublic; lastBroadcast: LastBroadcast | null; viewer: ChannelViewer | null };
+
+type Tab = 'live' | 'videos';
 
 /**
  * Channel state = initial GET + Server-Sent Events. SSE `state` events replace `live`;
@@ -55,7 +63,7 @@ function useChannel(slug: string) {
     async (signal?: AbortSignal): Promise<boolean> => {
       try {
         const res = await api.channel(slug, signal);
-        setInfo({ channel: res.channel, lastBroadcast: res.lastBroadcast });
+        setInfo({ channel: res.channel, lastBroadcast: res.lastBroadcast, viewer: res.viewer ?? null });
         // SSE is the source of truth for `live` once it has spoken (and is connected).
         if (!gotEventRef.current || !sseHealthyRef.current) setLive(res.live);
         loadedRef.current = true;
@@ -179,7 +187,7 @@ function useChannel(slug: string) {
     return () => window.clearInterval(id);
   }, [phase, visible, sseHealthy, load]);
 
-  return { phase, error, info, live, sseHealthy, retry: () => setAttempt((n) => n + 1) };
+  return { phase, error, info, setInfo, live, sseHealthy, retry: () => setAttempt((n) => n + 1) };
 }
 
 /** Viewer heartbeat: every 20 s while live and the tab is visible, plus right when playback starts. */
@@ -220,7 +228,13 @@ export function ChannelPage() {
 }
 
 function Channel({ slug }: { slug: string }) {
-  const { phase, error, info, live, sseHealthy, retry } = useChannel(slug);
+  const { phase, error, info, setInfo, live, sseHealthy, retry } = useChannel(slug);
+  const { auth } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const tab: Tab = params.get('tab') === 'videos' ? 'videos' : 'live';
+  const [consented, setConsented] = useState(() => hasMatureConsent(slug));
+  const stageRef = useRef<HTMLDivElement>(null);
+  const tabIds = { base: useId() };
   const state = broadcastState(live);
   const now = useNow(1000, live !== null);
   const onPlaying = useHeartbeat(slug, live !== null);
@@ -265,6 +279,20 @@ function Channel({ slug }: { slug: string }) {
   const thumb = live?.thumbnailUrl ? withCacheBust(live.thumbnailUrl, thumbTick) : null;
   const showPlayer = live !== null && live.playbackUrl !== null;
   const uptime = live ? formatUptime(sinceMs(live.startedAt, now)) : null;
+  const own = auth.status === 'authed' && auth.channel.slug.toLowerCase() === channel.slug.toLowerCase();
+  const gated = channel.mature && !consented && !own;
+
+  const selectTab = (next: Tab) => {
+    setParams(next === 'videos' ? { tab: 'videos' } : {}, { replace: true, preventScrollReset: true });
+  };
+  const tabId = (t: Tab) => `${tabIds.base}-tab-${t}`;
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const next: Tab = e.key === 'Home' ? 'live' : e.key === 'End' ? 'videos' : tab === 'live' ? 'videos' : 'live';
+    selectTab(next);
+    document.getElementById(tabId(next))?.focus();
+  };
 
   return (
     <div className="page page--narrow channel" data-state={state}>
@@ -272,13 +300,23 @@ function Channel({ slug }: { slug: string }) {
         {ANNOUNCE[state]}
       </p>
 
-      <div className="channel__stage">
-        {showPlayer && live?.playbackUrl ? (
+      <div className="channel__stage" ref={stageRef} tabIndex={-1}>
+        {live && gated ? (
+          <MatureGate
+            slug={channel.slug}
+            displayName={channel.displayName}
+            onAccept={() => {
+              setConsented(true);
+              window.requestAnimationFrame(() => stageRef.current?.querySelector<HTMLElement>('.player')?.focus());
+            }}
+          />
+        ) : showPlayer && live?.playbackUrl ? (
           <Player
             key={live.broadcastId}
             src={live.playbackUrl}
             renditions={live.renditions}
             live={state === 'live'}
+            lowLatency={live.latencyMode === 'low'}
             poster={live.thumbnailUrl}
             label={`Трансляция ${channel.displayName}`}
             onPlaying={onPlaying}
@@ -304,7 +342,7 @@ function Channel({ slug }: { slug: string }) {
             </div>
           </div>
         ) : (
-          <OfflineStage last={info.lastBroadcast} />
+          <OfflineStage last={info.lastBroadcast} onVideos={() => selectTab('videos')} />
         )}
       </div>
 
@@ -317,56 +355,136 @@ function Channel({ slug }: { slug: string }) {
 
       <div className="channel__bar">
         <div className="channel__who">
-          <Monogram name={channel.displayName} seed={channel.slug} size={52} />
+          <Avatar channel={channel} size={56} live={state === 'live'} />
           <div className="channel__ident">
             <h1 className="channel__name">{channel.displayName}</h1>
             {channel.title ? <p className="channel__title">{channel.title}</p> : null}
-            {channel.category ? <span className="chip channel__category">{channel.category}</span> : null}
+            <div className="channel__tags">
+              {channel.category ? (
+                <Link to={categoryHref(channel.category)} className="chip channel__category">
+                  {channel.category}
+                </Link>
+              ) : null}
+              {channel.mature ? (
+                <span className="chip channel__mature" title="Контент для взрослых">
+                  18+
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
 
-        {live ? (
-          <dl className="channel__metrics">
-            <div className="metric metric--state">
-              <dt className="visually-hidden">Статус</dt>
-              <dd>
-                <StatusBadge state={state} size="lg" />
-              </dd>
-            </div>
-            <div className="metric">
-              <dt className="metric__label">{viewersWord(live.viewers)}</dt>
-              <dd className="metric__value num">{formatCount(live.viewers)}</dd>
-            </div>
-            <div className="metric">
-              <dt className="metric__label">в эфире</dt>
-              <dd className="metric__value num">
-                <time dateTime={live.startedAt}>{uptime}</time>
-              </dd>
-            </div>
-          </dl>
-        ) : null}
+        <div className="channel__side">
+          {live ? (
+            <dl className="channel__metrics">
+              <div className="metric metric--state">
+                <dt className="visually-hidden">Статус</dt>
+                <dd>
+                  <StatusBadge state={state} size="lg" />
+                </dd>
+              </div>
+              <div className="metric">
+                <dt className="metric__label">{viewersWord(live.viewers)}</dt>
+                <dd className="metric__value num">{formatCount(live.viewers)}</dd>
+              </div>
+              <div className="metric">
+                <dt className="metric__label">в эфире</dt>
+                <dd className="metric__value num">
+                  <time dateTime={live.startedAt}>{uptime}</time>
+                </dd>
+              </div>
+            </dl>
+          ) : null}
+          <div className="channel__follow">
+            {own ? (
+              <>
+                <span className="channel__followers num">{followersLabel(channel.followers ?? 0)}</span>
+                <Link to="/dashboard" className="btn btn--outline">
+                  <SquarePlay aria-hidden="true" />
+                  Открыть студию
+                </Link>
+              </>
+            ) : (
+              <>
+                <span className="channel__followers num">{followersLabel(channel.followers ?? 0)}</span>
+                <FollowButton
+                  slug={channel.slug}
+                  displayName={channel.displayName}
+                  following={auth.status === 'authed' ? (info.viewer?.following ?? false) : null}
+                  followers={channel.followers ?? 0}
+                  onChange={(r) =>
+                    setInfo((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            channel: { ...prev.channel, followers: r.followers },
+                            viewer: { following: r.following },
+                          }
+                        : prev,
+                    )
+                  }
+                />
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
-      {live ? (
-        <div className="channel__panels">
-          <section className="panel" aria-labelledby="signal-h">
-            <h2 className="h-section" id="signal-h">
-              Источник
-            </h2>
-            <SourceChips live={live} />
-          </section>
-          <section className="panel" aria-labelledby="renditions-h">
-            <h2 className="h-section" id="renditions-h">
-              Доступные качества
-            </h2>
-            {live.renditions.length ? (
-              <RenditionLadder renditions={live.renditions} />
-            ) : (
-              <p className="muted channel__pending">Список появится, когда видео будет готово.</p>
-            )}
-          </section>
+      <div className="tabs channel__tabs">
+        <div className="tabs__list" role="tablist" aria-label="Разделы канала">
+          {(
+            [
+              ['live', 'Эфир'],
+              ['videos', 'Видео'],
+            ] as const
+          ).map(([t, text]) => (
+            <button
+              key={t}
+              id={tabId(t)}
+              type="button"
+              role="tab"
+              className="tabs__tab"
+              aria-selected={tab === t}
+              aria-controls={`${tabIds.base}-panel`}
+              tabIndex={tab === t ? 0 : -1}
+              onClick={() => selectTab(t)}
+              onKeyDown={onTabKey}
+            >
+              {text}
+              {t === 'live' && live ? <span className="live-dot" aria-hidden="true" /> : null}
+            </button>
+          ))}
         </div>
-      ) : null}
+        <div className="tabs__panel" role="tabpanel" id={`${tabIds.base}-panel`} aria-labelledby={tabId(tab)}>
+          {tab === 'videos' ? (
+            <ChannelVideos slug={channel.slug} own={own} />
+          ) : (
+            <div className="channel__panels">
+              {live ? (
+                <>
+                  <section className="panel" aria-labelledby="signal-h">
+                    <h2 className="h-section" id="signal-h">
+                      Источник
+                    </h2>
+                    <SourceChips live={live} />
+                  </section>
+                  <section className="panel" aria-labelledby="renditions-h">
+                    <h2 className="h-section" id="renditions-h">
+                      Доступные качества
+                    </h2>
+                    {live.renditions.length ? (
+                      <RenditionLadder renditions={live.renditions} />
+                    ) : (
+                      <p className="muted channel__pending">Список появится, когда видео будет готово.</p>
+                    )}
+                  </section>
+                </>
+              ) : null}
+              <ChannelAbout channel={channel} own={own} />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -406,7 +524,7 @@ function ReconnectingNotice() {
   );
 }
 
-function OfflineStage({ last }: { last: LastBroadcast | null }) {
+function OfflineStage({ last, onVideos }: { last: LastBroadcast | null; onVideos: () => void }) {
   return (
     <div className="stage stage--offline">
       <div className="offline">
@@ -422,6 +540,11 @@ function OfflineStage({ last }: { last: LastBroadcast | null }) {
               </span>
             </p>
           </div>
+        ) : null}
+        {last ? (
+          <button type="button" className="btn btn--outline btn--sm offline__videos" onClick={onVideos}>
+            Смотреть записи
+          </button>
         ) : (
           <p className="offline__hint">Здесь ещё не было трансляций.</p>
         )}

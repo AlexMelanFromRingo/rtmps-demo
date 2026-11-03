@@ -1,0 +1,143 @@
+.vod {
+  padding-top: var(--s-4);
+}
+
+@media (max-width: 719px) {
+  .vod {
+    padding-top: 0;
+  }
+}
+
+.vod__live {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid rgb(255 68 56 / 0.45);
+  border-radius: var(--r-control);
+  background: rgb(255 68 56 / 0.08);
+  color: var(--fog);
+  font-size: var(--fs-14);
+  text-decoration: none;
+}
+
+.vod__live:hover {
+  border-color: var(--tally);
+}
+
+.vod__live > span:nth-child(2) {
+  flex: 1;
+}
+
+.vod__live svg {
+  width: 18px;
+  height: 18px;
+  color: var(--tally-ink);
+}
+
+.vod__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-5) 0 var(--s-4);
+}
+
+.vod__titles {
+  display: grid;
+  gap: var(--s-2);
+  min-width: 0;
+  flex: 1 1 420px;
+}
+
+.vod__title {
+  font-family: var(--font-display);
+  font-size: var(--fs-21);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 720px) {
+  .vod__title {
+    font-size: var(--fs-24);
+  }
+}
+
+.vod__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: 4px;
+  max-width: none;
+  font-size: var(--fs-14);
+  color: var(--haze);
+}
+
+.vod__cat {
+  color: var(--fog);
+}
+
+.vod__expires {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-13);
+  color: var(--haze);
+}
+
+.vod__expires svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.vod__channel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-5);
+  padding: var(--s-4) 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.vod__who {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+  color: var(--fog);
+  text-decoration: none;
+  border-radius: var(--r-control);
+}
+
+.vod__who-text {
+  display: grid;
+  min-width: 0;
+}
+
+.vod__who-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vod__who:hover .vod__who-name {
+  text-decoration: underline;
+  text-decoration-color: var(--edge);
+}
+
+.vod__who-sub {
+  font-size: var(--fs-13);
+  color: var(--haze);
+}
+
+.vod__more {
+  margin-top: var(--s-6);
+}

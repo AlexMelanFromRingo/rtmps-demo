@@ -427,3 +427,194 @@
     opacity: 1;
   }
 }
+
+.player__bigplay .player__replay {
+  fill: none;
+  margin-left: 0;
+}
+
+/* ----- Low-latency chip (stats head) ----- */
+.player__ll {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  margin-right: var(--s-1);
+  padding: 1px 6px;
+  border: 1px solid var(--edge);
+  border-radius: var(--r-chip);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.player__ll svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ----- VOD timeline ----- */
+.player[data-mode='vod'] .player__controls {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+.player__seek {
+  position: relative;
+  flex: 1 0 calc(100% - 2 * var(--s-2));
+  display: flex;
+  align-items: center;
+  height: 22px;
+  margin: 0 var(--s-2) 2px;
+  border-radius: 4px;
+}
+
+.player__seek:has(.player__seek-input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.player__track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: rgb(255 255 255 / 0.22);
+  transition: height var(--t-fast) var(--ease-out);
+}
+
+.player__seek:hover .player__track,
+.player__seek:focus-within .player__track {
+  height: 6px;
+}
+
+.player__buffered,
+.player__played {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: inherit;
+}
+
+.player__buffered {
+  background: rgb(255 255 255 / 0.32);
+}
+
+.player__played {
+  background: var(--fog);
+}
+
+.player__head {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.5);
+  transform: translateY(-50%) scale(0);
+  transition: transform var(--t-fast) var(--ease-out);
+}
+
+.player__seek:hover .player__head,
+.player__seek:focus-within .player__head {
+  transform: translateY(-50%) scale(1);
+}
+
+/* The native range stays on top for pointer + keyboard + screen readers; we draw the visuals. */
+.player__seek-input {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.player__seek-input:disabled {
+  cursor: default;
+}
+
+.player__seek-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  padding: 2px 6px;
+  border-radius: var(--r-chip);
+  background: rgb(11 22 28 / 0.92);
+  border: 1px solid var(--rule);
+  font-size: var(--fs-12);
+  font-weight: 600;
+  color: var(--fog);
+  transform: translateX(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.player__time {
+  padding: 0 var(--s-2);
+  font-size: var(--fs-13);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.player__time-sep {
+  color: rgb(255 255 255 / 0.6);
+}
+
+@media (hover: none) {
+  .player__head {
+    transform: translateY(-50%) scale(1);
+  }
+}
+
+/* ----- "Resumed from" note ----- */
+.player__resume {
+  position: absolute;
+  z-index: 5;
+  left: var(--s-3);
+  bottom: 84px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--s-3);
+  max-width: calc(100% - 24px);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-control);
+  border: 1px solid var(--rule);
+  background: rgb(11 22 28 / 0.9);
+  font-size: var(--fs-13);
+}
+
+.player__resume-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fog);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+@media (max-width: 560px) {
+  .player__time {
+    padding: 0 var(--s-1);
+    font-size: var(--fs-12);
+  }
+
+  .player__resume {
+    left: var(--s-2);
+    bottom: 80px;
+  }
+
+  /* VOD adds a timecode to the row: keep everything on one line. */
+  .player[data-mode='vod'] .player__btn--text .player__btn-label {
+    display: none;
+  }
+}

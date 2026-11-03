@@ -1,0 +1,14 @@
+# Dashboards from JSON files mounted at /etc/grafana/dashboards.
+# Edit the JSON in the repository; UI changes cannot be saved over it.
+apiVersion: 1
+
+providers:
+  - name: streamhub
+    folder: StreamHub
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

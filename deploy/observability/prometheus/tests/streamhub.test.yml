@@ -1,0 +1,163 @@
+# Unit tests for the alert rules:
+#   promtool test rules deploy/observability/prometheus/tests/streamhub.test.yml
+rule_files:
+  - ../rules/streamhub.yml
+
+evaluation_interval: 15s
+
+tests:
+  # Two API replicas: one dies → only TargetDown; both die → NoHealthyAPI.
+  # absent() over a comparison carries no labels, hence no `job` below.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="api", instance="10.0.0.1:3000"}'
+        values: "1x10 0x20"
+      - series: 'up{job="api", instance="10.0.0.2:3000"}'
+        values: "1x20 0x20"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: StreamHubTargetDown
+        exp_alerts:
+          - exp_labels: { severity: warning, job: api, instance: "10.0.0.1:3000" }
+            exp_annotations:
+              summary: "api 10.0.0.1:3000 не отдаёт метрики"
+              description: "Реплика есть в DNS, но /metrics не отвечает 2 минуты: процесс завис или перегружен."
+      - eval_time: 5m
+        alertname: StreamHubNoHealthyAPI
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: StreamHubNoHealthyAPI
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "Ни одна реплика API не отвечает"
+              description: "Prometheus не может снять /metrics ни с одной реплики api: сайт, хуки ingest и авторизация публикаций не работают."
+
+  # No ingest target at all (e.g. container stopped → gone from DNS).
+  - interval: 15s
+    input_series:
+      - series: 'up{job="api", instance="10.0.0.1:3000"}'
+        values: "1x10"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: StreamHubNoIngestNodes
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: "Нет ни одного доступного ingest-узла"
+              description: "Приём RTMP/SRT/WHIP невозможен: ни один ingest-узел не найден в DNS или не отвечает."
+
+  # Ingest node in DNS but not answering.
+  - interval: 15s
+    input_series:
+      - series: 'up{job="ingest", instance="10.0.0.9:9998"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: StreamHubIngestNodeDown
+        exp_alerts:
+          - exp_labels: { severity: critical, job: ingest, instance: "10.0.0.9:9998" }
+            exp_annotations:
+              summary: "Ingest-узел 10.0.0.9:9998 не отвечает"
+              description: "Метрики MediaMTX недоступны больше минуты. Стримеры этого узла, скорее всего, отключены."
+
+  # Capacity: 2 workers × 2 slots; 3 active = 75% (quiet), then 4 = 100%.
+  - interval: 1m
+    input_series:
+      - series: 'streamhub_worker_slots{job="worker", instance="w1"}'
+        values: "2x20"
+      - series: 'streamhub_worker_slots{job="worker", instance="w2"}'
+        values: "2x20"
+      - series: 'streamhub_worker_active_jobs{job="worker", instance="w1"}'
+        values: "2x20"
+      - series: 'streamhub_worker_active_jobs{job="worker", instance="w2"}'
+        values: "1x8 2x12"
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: StreamHubWorkerCapacityHigh
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: StreamHubWorkerCapacityHigh
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Воркеры загружены на 100%"
+              description: "Активных транскодов больше 80% слотов 5 минут. Новые эфиры уйдут в degraded-режим, запаса N+1 на падение воркера нет."
+
+  # ffmpeg crash loop: 3 exits per minute; "lease"/"shutdown" are ignored.
+  - interval: 1m
+    input_series:
+      - series: 'streamhub_worker_ffmpeg_exits_total{job="worker", instance="w1", reason="exit"}'
+        values: "0+3x30"
+      - series: 'streamhub_worker_ffmpeg_exits_total{job="worker", instance="w1", reason="lease"}'
+        values: "0+10x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: StreamHubFfmpegExitRateHigh
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "ffmpeg завершается 3.0 раз/мин"
+              description: "Частые выходы ffmpeg с reason=exit: транскод падает и перезапускается (источник, кодек, хранилище). Порог рассчитан на небольшую платформу."
+
+  # Normal stream ends (one exit every 2 minutes) do not alert.
+  - interval: 1m
+    input_series:
+      - series: 'streamhub_worker_ffmpeg_exits_total{job="worker", instance="w1", reason="exit"}'
+        values: "0+0.5x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: StreamHubFfmpegExitRateHigh
+        exp_alerts: []
+
+  # Every S3 PUT takes 1–2.5 s → p99 above 1 s.
+  - interval: 15s
+    input_series:
+      - series: 'streamhub_worker_upload_seconds_bucket{job="worker", instance="w1", le="1"}'
+        values: "0+0x60"
+      - series: 'streamhub_worker_upload_seconds_bucket{job="worker", instance="w1", le="2.5"}'
+        values: "0+10x60"
+      - series: 'streamhub_worker_upload_seconds_bucket{job="worker", instance="w1", le="+Inf"}'
+        values: "0+10x60"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: StreamHubS3UploadSlow
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "p99 выгрузки в S3: 2.485s"
+              description: "Сегменты длиной 2 с выгружаются дольше 1 с (p99). Растёт очередь выгрузки, зрители получат 404 и подвисания."
+
+  # 10% of user requests fail with 500; healthchecks do not dilute the ratio.
+  - interval: 15s
+    input_series:
+      - series: 'streamhub_api_request_seconds_count{job="api", instance="a1", method="GET", route="/api/streams", status="200"}'
+        values: "0+9x60"
+      - series: 'streamhub_api_request_seconds_count{job="api", instance="a1", method="GET", route="/api/streams", status="500"}'
+        values: "0+1x60"
+      - series: 'streamhub_api_request_seconds_count{job="api", instance="a1", method="GET", route="/healthz", status="200"}'
+        values: "0+1000x60"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: StreamHubAPIErrorRateHigh
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "10% ответов API — 5xx"
+              description: "Больше 5% запросов к API (включая /internal/*) завершаются ошибкой сервера 5 минут подряд."
+
+  # 1 denied publish per second for 15 minutes.
+  - interval: 15s
+    input_series:
+      - series: 'streamhub_ingest_auth_total{job="api", instance="a1", action="publish", result="deny"}'
+        values: "0+15x80"
+      - series: 'streamhub_ingest_auth_total{job="api", instance="a1", action="read", result="deny"}'
+        values: "0+150x80"
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: StreamHubPublishDeniedSpike
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: "Много отказов в публикации: 1.00/с"
+              description: "Control plane отклоняет больше 30 попыток публикации в минуту 10 минут подряд: подбор ключей или стример со старым ключом в цикле переподключения."

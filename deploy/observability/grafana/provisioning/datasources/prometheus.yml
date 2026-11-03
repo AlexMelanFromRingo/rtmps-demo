@@ -1,0 +1,16 @@
+# Provisioned Prometheus data source. The fixed uid is referenced by the
+# provisioned dashboards (as the default of their `datasource` variable).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      # Must match global.scrape_interval in prometheus.yml ($__rate_interval).
+      timeInterval: 15s

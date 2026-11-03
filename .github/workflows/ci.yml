@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: server (typecheck + unit tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+
+  web:
+    name: web (typecheck + build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
+  srt-gateway:
+    name: srt-gateway (gofmt + vet + test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: deploy/srt-gateway
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: deploy/srt-gateway/go.mod
+          cache-dependency-path: deploy/srt-gateway/go.sum
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed for: $unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test ./...
+
+  observability:
+    name: observability configs (promtool, compose, dashboard JSON)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Compose files are valid
+        run: docker compose -f docker-compose.yml -f docker-compose.observability.yml config --quiet
+      - name: promtool check config / rules / unit tests
+        run: |
+          # Same Prometheus version as the compose overlay (single source of truth).
+          image="$(docker compose -f docker-compose.yml -f docker-compose.observability.yml config --images | grep '^prom/prometheus:')"
+          echo "Using $image"
+          run() { docker run --rm -v "$PWD/deploy/observability/prometheus:/etc/prometheus:ro" -w /etc/prometheus --entrypoint promtool "$image" "$@"; }
+          run check config prometheus.yml
+          run check rules rules/streamhub.yml
+          run test rules tests/streamhub.test.yml
+      - name: Grafana dashboards are valid JSON
+        run: |
+          for f in deploy/observability/grafana/dashboards/*.json; do
+            jq -e '.uid and .title and (.panels | length > 0)' "$f" > /dev/null || { echo "::error file=$f::invalid dashboard"; exit 1; }
+          done
+
+  docker:
+    name: docker images (build only, no push)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build every image from docker-compose.yml
+        run: docker compose build

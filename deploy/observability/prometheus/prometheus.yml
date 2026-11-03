@@ -1,0 +1,76 @@
+# Prometheus for StreamHub (optional overlay: docker-compose.observability.yml).
+#
+# Targets are discovered through Docker's embedded DNS: an A-record lookup of a
+# compose service name returns one address per replica, so scaling
+# API_REPLICAS / WORKER_REPLICAS needs no config change. `instance` is the
+# replica's container IP:port.
+#
+# Every endpoint scraped here is internal-only (see docs/OPERATIONS.md) and is
+# never routed by the edge.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Fastify API replicas: streamhub_api_request_seconds, streamhub_api_sse_clients,
+  # streamhub_ingest_auth_total + Node.js defaults (prefix streamhub_api_).
+  - job_name: api
+    dns_sd_configs:
+      - names: [api]
+        type: A
+        port: 3000
+        refresh_interval: 15s
+
+  # Transcoding workers: streamhub_worker_active_jobs / _slots / _ffmpeg_exits_total /
+  # _upload_seconds / _job_claims_total + Node.js defaults (prefix streamhub_worker_).
+  - job_name: worker
+    dns_sd_configs:
+      - names: [worker]
+        type: A
+        port: 9100
+        refresh_interval: 15s
+
+  # MediaMTX ingest nodes.
+  - job_name: ingest
+    # MediaMTX answers with "text/plain" (no version parameter).
+    fallback_scrape_protocol: PrometheusText0.0.4
+    dns_sd_configs:
+      - names: [ingest]
+        type: A
+        port: 9998
+        refresh_interval: 15s
+    metric_relabel_configs:
+      # MediaMTX exports ~100 series per connection. Keep only what the
+      # dashboard and alerts use.
+      - source_labels: [__name__]
+        regex: paths|paths_inbound_bytes|paths_outbound_bytes|paths_readers|paths_inbound_frames_in_error|rtmp_conns|srt_conns|webrtc_sessions|rtsp_sessions
+        action: keep
+      # Path names are "live/<stream key>" and connections carry the
+      # publisher's IP:port. Stream keys are credentials: never store them.
+      # `stream` is an irreversible 32-bit hash of the path, identical for a
+      # path and its connections, so series stay distinct and joinable.
+      - source_labels: [name, path]
+        separator: ""
+        action: hashmod
+        modulus: 4294967296
+        target_label: stream
+      - action: labeldrop
+        regex: name|path|remoteAddr
+
+  # Universal SRT gateway (Go): streamhub_srt_gateway_*.
+  - job_name: srt-gateway
+    fallback_scrape_protocol: PrometheusText0.0.4
+    dns_sd_configs:
+      - names: [srt-gateway]
+        type: A
+        port: 9101
+        refresh_interval: 15s

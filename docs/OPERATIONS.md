@@ -74,6 +74,8 @@ docker run -d --name ingest --network host \
 
 ## Мониторинг
 
+Готовый стек Prometheus + Grafana с дашбордом и алертами: [OBSERVABILITY.md](OBSERVABILITY.md).
+
 Метрики Prometheus (только внутренняя сеть):
 
 | Источник | Endpoint | Ключевые метрики |

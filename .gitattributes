@@ -1,0 +1,29 @@
+# Normalise line endings: LF in the repository and in working trees, so files
+# copied into Linux containers (entrypoints, configs) work from any OS.
+* text=auto eol=lf
+
+# Executed inside containers / on Linux hosts: must never get CRLF.
+*.sh text eol=lf
+*.conf.template text eol=lf
+
+*.go text eol=lf diff=golang
+*.ts text eol=lf
+*.tsx text eol=lf
+*.sql text eol=lf
+*.md text eol=lf diff=markdown
+
+# Lockfiles: keep LF, collapse in diffs.
+package-lock.json text eol=lf -diff linguist-generated=true
+go.sum text eol=lf -diff linguist-generated=true
+
+# Binary assets.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.mp4 binary

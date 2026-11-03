@@ -1,0 +1,114 @@
+# StreamHub alert rules. Meaning and first response for every alert:
+# docs/OBSERVABILITY.md ("Алерты"). Unit tests: ../tests/streamhub.test.yml
+# (promtool test rules).
+#
+# Ops routes (/metrics, /healthz, /readyz) are excluded from API traffic
+# expressions: they are Prometheus scrapes and Docker healthchecks, not users.
+
+groups:
+  - name: streamhub.availability
+    rules:
+      - alert: StreamHubNoHealthyAPI
+        expr: absent(up{job="api"} == 1)
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ни одна реплика API не отвечает"
+          description: "Prometheus не может снять /metrics ни с одной реплики api: сайт, хуки ingest и авторизация публикаций не работают."
+
+      - alert: StreamHubNoWorkers
+        expr: absent(up{job="worker"} == 1)
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Нет ни одного живого воркера"
+          description: "Транскодирование остановлено: новые эфиры не получат плейлистов, текущие встанут."
+
+      - alert: StreamHubIngestNodeDown
+        expr: up{job="ingest"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ingest-узел {{ $labels.instance }} не отвечает"
+          description: "Метрики MediaMTX недоступны больше минуты. Стримеры этого узла, скорее всего, отключены."
+
+      - alert: StreamHubNoIngestNodes
+        expr: absent(up{job="ingest"} == 1)
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Нет ни одного доступного ingest-узла"
+          description: "Приём RTMP/SRT/WHIP невозможен: ни один ingest-узел не найден в DNS или не отвечает."
+
+      - alert: StreamHubTargetDown
+        expr: up{job=~"api|worker|srt-gateway"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} {{ $labels.instance }} не отдаёт метрики"
+          description: "Реплика есть в DNS, но /metrics не отвечает 2 минуты: процесс завис или перегружен."
+
+      - alert: StreamHubSrtGatewayDown
+        expr: absent(up{job="srt-gateway"} == 1)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Универсальный SRT-вход (srt-gateway) недоступен"
+          description: "Публикация по SRT на порт 8891 (AV1/VP9 в Matroska/WebM/FLV) не работает. Остальные входы не затронуты."
+
+  - name: streamhub.pipeline
+    rules:
+      - alert: StreamHubWorkerCapacityHigh
+        expr: sum(streamhub_worker_active_jobs) / sum(streamhub_worker_slots) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Воркеры загружены на {{ $value | humanizePercentage }}"
+          description: "Активных транскодов больше 80% слотов 5 минут. Новые эфиры уйдут в degraded-режим, запаса N+1 на падение воркера нет."
+
+      - alert: StreamHubFfmpegExitRateHigh
+        expr: sum(rate(streamhub_worker_ffmpeg_exits_total{reason="exit"}[10m])) * 60 > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ffmpeg завершается {{ $value | printf \"%.1f\" }} раз/мин"
+          description: "Частые выходы ffmpeg с reason=exit: транскод падает и перезапускается (источник, кодек, хранилище). Порог рассчитан на небольшую платформу."
+
+      - alert: StreamHubS3UploadSlow
+        expr: histogram_quantile(0.99, sum by (le) (rate(streamhub_worker_upload_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p99 выгрузки в S3: {{ $value | humanizeDuration }}"
+          description: "Сегменты длиной 2 с выгружаются дольше 1 с (p99). Растёт очередь выгрузки, зрители получат 404 и подвисания."
+
+      - alert: StreamHubAPIErrorRateHigh
+        expr: |
+          sum(rate(streamhub_api_request_seconds_count{status=~"5..", route!~"/metrics|/healthz|/readyz"}[5m]))
+            /
+          sum(rate(streamhub_api_request_seconds_count{route!~"/metrics|/healthz|/readyz"}[5m]))
+            > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanizePercentage }} ответов API — 5xx"
+          description: "Больше 5% запросов к API (включая /internal/*) завершаются ошибкой сервера 5 минут подряд."
+
+      - alert: StreamHubPublishDeniedSpike
+        expr: sum(rate(streamhub_ingest_auth_total{action="publish", result="deny"}[5m])) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Много отказов в публикации: {{ $value | printf \"%.2f\" }}/с"
+          description: "Control plane отклоняет больше 30 попыток публикации в минуту 10 минут подряд: подбор ключей или стример со старым ключом в цикле переподключения."

@@ -1,0 +1,68 @@
+# Optional observability stack for StreamHub: Prometheus + Grafana.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#
+#   Grafana     http://localhost:3001   (admin / $GRAFANA_ADMIN_PASSWORD)
+#   Prometheus  http://127.0.0.1:9090   (alerts: /alerts)
+#
+# Both ports listen on 127.0.0.1 only. Details: docs/OBSERVABILITY.md.
+# Config lives in deploy/observability/. Data: volumes promdata, grafana.
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+    volumes:
+      - ./deploy/observability/prometheus:/etc/prometheus:ro
+      - promdata:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: ${RESTART_POLICY:-no}
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # Development default only: set GRAFANA_ADMIN_PASSWORD in .env for anything
+      # beyond a local workstation. It applies on the first start (empty volume);
+      # later changes need `grafana cli admin reset-admin-password`.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-streamhub-dev-only}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/streamhub-overview.json
+      # No phoning home and no plugin downloads at startup (works offline).
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    volumes:
+      # Only these two: the image's own provisioning/{alerting,plugins} dirs stay.
+      - ./deploy/observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./deploy/observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deploy/observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+    ports:
+      # GRAFANA_BIND=0.0.0.0 exposes Grafana to the network: set a strong
+      # GRAFANA_ADMIN_PASSWORD first and put TLS in front of it.
+      - "${GRAFANA_BIND:-127.0.0.1}:${GRAFANA_PORT:-3001}:3000"
+    depends_on:
+      prometheus: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: ${RESTART_POLICY:-no}
+
+volumes:
+  promdata:
+  grafana:
